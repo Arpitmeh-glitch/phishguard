@@ -49,7 +49,12 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 
         response: Response = await call_next(request)
 
-        response.headers["Content-Security-Policy"]    = self.CSP
+        response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; "
+        "img-src 'self' data: https:; "
+        "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+        "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net;"
+        )
         response.headers["X-Frame-Options"]            = "DENY"
         response.headers["X-Content-Type-Options"]     = "nosniff"
         response.headers["X-XSS-Protection"]           = "1; mode=block"
@@ -64,7 +69,9 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers["X-Request-ID"] = request_id
 
         # Remove server fingerprinting headers if uvicorn set them
-        response.headers.pop("Server", None)
-        response.headers.pop("X-Powered-By", None)
+        if "server" in response.headers:
+            del response.headers["server"]
 
+        if "x-powered-by" in response.headers:
+            del response.headers["x-powered-by"]
         return response
