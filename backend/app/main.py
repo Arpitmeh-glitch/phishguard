@@ -111,6 +111,7 @@ app.add_middleware(
     allow_origins=[
         "http://localhost:3000",
         "https://phishguard-brown.vercel.app",
+        "https://phishguard-arpitmeh-glitchs-projects.vercel.app",
     ],
     allow_origin_regex=r"https://.*\.vercel\.app",
     allow_credentials=True,

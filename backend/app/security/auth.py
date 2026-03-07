@@ -55,21 +55,48 @@ def decode_token(token: str) -> dict:
 
 # ── Current User Dependency ───────────────────────────────────────────────────
 
+from jose import JWTError, jwt
+from fastapi import Depends, HTTPException, status
+from fastapi.security import OAuth2PasswordBearer
+
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
+
+import uuid
+from jose import JWTError, jwt
+from fastapi import Depends, HTTPException, status
+from sqlalchemy.orm import Session
+from fastapi.security import OAuth2PasswordBearer
+
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
+
 def get_current_user(
-    credentials: HTTPAuthorizationCredentials = Security(security),
-    db: Session = Depends(get_db),
-) -> User:
-    payload = decode_token(credentials.credentials)
-    if payload.get("type") != "access":
-        raise HTTPException(status_code=401, detail="Invalid token type")
+    token: str = Depends(oauth2_scheme),
+    db: Session = Depends(get_db)
+):
 
-    user_id: str = payload.get("sub")
-    if not user_id:
-        raise HTTPException(status_code=401, detail="Invalid token")
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
 
-    user = db.query(User).filter(User.id == user_id, User.is_active == True).first()
-    if not user:
-        raise HTTPException(status_code=401, detail="User not found or inactive")
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        user_id: str = payload.get("sub")
+
+        if user_id is None:
+            raise credentials_exception
+
+        # Convert string → UUID
+        user_uuid = uuid.UUID(user_id)
+
+    except (JWTError, ValueError):
+        raise credentials_exception
+
+    user = db.query(User).filter(User.id == user_uuid).first()
+
+    if user is None:
+        raise credentials_exception
 
     return user
 
