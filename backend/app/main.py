@@ -109,23 +109,15 @@ app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-    "http://localhost:3000",
-    "https://phishguard-arpitmeh-glitchs-projects.vercel.app",
+        "http://localhost:3000",
+        "https://phishguard-brown.vercel.app",
     ],
     allow_origin_regex=r"https://.*\.vercel\.app",
-    allow_credentials=True,   # Required: frontend sends Authorization / cookies
-    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allow_headers=[
-        "Authorization",       # JWT Bearer token
-        "Content-Type",        # application/json
-        "Accept",
-        "Origin",
-        "X-Requested-With",
-        "X-Request-ID",        # Correlation ID (set by SecurityHeadersMiddleware)
-        "Cookie",              # Cookie-based JWT refresh token
-    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
     expose_headers=["Content-Length", "X-Request-ID"],
-    max_age=600,               # Cache preflight for 10 minutes
+    max_age=600,
 )
 
 # ── Routes ────────────────────────────────────────────────────────────────────
