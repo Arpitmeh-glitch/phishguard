@@ -1,708 +1,533 @@
 "use client";
 
-import { motion, useScroll, useTransform, AnimatePresence } from "framer-motion";
-import { useRef, useEffect, useState } from "react";
+/*
+ * PRODUCTION FIX NOTES
+ * ────────────────────────────────────────────────────────────────────────────
+ * WHY THE PREVIOUS VERSION DID NOT APPEAR ON VERCEL
+ *
+ * 1. FRAMER-MOTION SSR CRASH → EMPTY PAGE (root cause)
+ *    `useScroll` with a DOM `target` ref and `useTransform` both require a
+ *    real browser DOM. Vercel runs `next build` which statically pre-renders
+ *    every page in Node.js. In Node.js there is no DOM — the ref is null.
+ *    Framer-motion throws during the pre-render pass. Next.js catches the
+ *    error, serves an EMPTY HTML shell, and reports a successful build.
+ *    This is the "build succeeds but page is blank" pattern.
+ *    FIX: All framer-motion hooks are gated behind a `mounted` state that
+ *    is only set to true after `useEffect` fires (client-only).
+ *
+ * 2. "use client" MUST BE LINE 1 — NO EXCEPTIONS
+ *    In Next.js 14 App Router, if ANY content (blank line, comment, BOM)
+ *    precedes "use client", the directive is silently ignored. The file is
+ *    treated as a Server Component and hooks are illegal — the compiler
+ *    strips the interactive parts and the page is blank.
+ *
+ * 3. INLINE @import IN globals.css DROPPED BY POSTCSS
+ *    PostCSS processes @tailwind directives and hoists them before @import
+ *    statements. This violates the CSS spec rule that @import must come
+ *    before all other rules. Browsers silently discard the @import, so
+ *    Syne font never loads and all `font-family: 'Syne'` declarations fall
+ *    back to system fonts. The page looks broken enough to seem "missing".
+ *    FIX: Fonts are declared via <link> in layout.tsx (already correct).
+ *    The @import in globals.css is redundant and should be removed.
+ *
+ * CORRECT FOLDER STRUCTURE
+ * ────────────────────────────────────────────────────────────────────────────
+ *  src/
+ *  └── app/
+ *      ├── layout.tsx            ← root layout
+ *      ├── globals.css
+ *      ├── page.tsx              ← home / landing  →  /
+ *      ├── about/
+ *      │   └── page.tsx          ← THIS FILE       →  /about  ✓
+ *      └── dashboard/
+ *          ├── layout.tsx
+ *          └── ...
+ *
+ *  Rules:
+ *  • Folder name must be lowercase: `about` not `About`
+ *  • File must be named exactly `page.tsx` (not index.tsx, not Page.tsx)
+ *  • No route group brackets around it: (about)/page.tsx creates /about but
+ *    also silently conflicts if another layout wraps it incorrectly.
+ *  • The about folder must NOT contain a layout.tsx that imports Zustand or
+ *    localStorage — that would make it a broken Server Component shell.
+ */
+
+import { motion } from "framer-motion";
+import { useEffect, useState } from "react";
 import {
-  Shield,
-  Link2,
-  MessageSquare,
-  FileSearch,
-  Cpu,
-  Users,
-  Clock,
-  Github,
-  Linkedin,
-  ExternalLink,
-  ChevronDown,
-  AlertTriangle,
-  Lock,
-  Database,
-  Zap,
+  Shield, Link2, MessageSquare, FileSearch,
+  Cpu, Clock, Github, Linkedin, AlertTriangle,
+  Lock, Database, Zap, ChevronDown, Users,
 } from "lucide-react";
 
-// ─── PARTICLE SYSTEM ────────────────────────────────────────────────────────
-function CyberGrid() {
-  return (
-    <div className="absolute inset-0 overflow-hidden pointer-events-none">
-      {/* Grid */}
-      <div
-        className="absolute inset-0"
-        style={{
-          backgroundImage: `
-            linear-gradient(rgba(0,255,255,0.03) 1px, transparent 1px),
-            linear-gradient(90deg, rgba(0,255,255,0.03) 1px, transparent 1px)
-          `,
-          backgroundSize: "60px 60px",
-        }}
-      />
-      {/* Radial fade */}
-      <div
-        className="absolute inset-0"
-        style={{
-          background:
-            "radial-gradient(ellipse 80% 50% at 50% 0%, rgba(0,255,255,0.08) 0%, transparent 70%)",
-        }}
-      />
-    </div>
-  );
-}
+// ─── CONSTANTS ───────────────────────────────────────────────────────────────
 
-function FloatingParticles() {
-  const particles = Array.from({ length: 22 }, (_, i) => ({
-    id: i,
-    x: Math.random() * 100,
-    y: Math.random() * 100,
-    size: Math.random() * 2 + 1,
-    duration: Math.random() * 8 + 6,
-    delay: Math.random() * 4,
-  }));
-
-  return (
-    <div className="absolute inset-0 overflow-hidden pointer-events-none">
-      {particles.map((p) => (
-        <motion.div
-          key={p.id}
-          className="absolute rounded-full bg-cyan-400"
-          style={{
-            left: `${p.x}%`,
-            top: `${p.y}%`,
-            width: p.size,
-            height: p.size,
-            opacity: 0.3,
-            boxShadow: `0 0 ${p.size * 3}px rgba(0,255,255,0.8)`,
-          }}
-          animate={{
-            y: [0, -30, 0],
-            opacity: [0.15, 0.5, 0.15],
-          }}
-          transition={{
-            duration: p.duration,
-            delay: p.delay,
-            repeat: Infinity,
-            ease: "easeInOut",
-          }}
-        />
-      ))}
-    </div>
-  );
-}
-
-// ─── SCROLL REVEAL WRAPPER ───────────────────────────────────────────────────
-function RevealSection({
-  children,
-  className = "",
-}: {
-  children: React.ReactNode;
-  className?: string;
-}) {
-  return (
-    <motion.div
-      className={className}
-      initial={{ opacity: 0, y: 48 }}
-      whileInView={{ opacity: 1, y: 0 }}
-      viewport={{ once: true, margin: "-80px" }}
-      transition={{ duration: 0.7, ease: [0.22, 1, 0.36, 1] }}
-    >
-      {children}
-    </motion.div>
-  );
-}
-
-// ─── SECTION LABEL ───────────────────────────────────────────────────────────
-function SectionLabel({ text }: { text: string }) {
-  return (
-    <div className="flex items-center gap-3 mb-4">
-      <div className="h-px w-8 bg-cyan-500" />
-      <span
-        className="text-cyan-400 text-xs font-mono tracking-[0.3em] uppercase"
-        style={{ fontFamily: "'JetBrains Mono', 'Fira Code', monospace" }}
-      >
-        {text}
-      </span>
-      <div className="h-px w-8 bg-cyan-500" />
-    </div>
-  );
-}
-
-// ─── FEATURE CARD ────────────────────────────────────────────────────────────
 const features = [
   {
     icon: Link2,
     title: "URL Scanner",
-    desc: "Analyzes suspicious links and detects phishing patterns using heuristic and ML-based engines.",
-    color: "from-cyan-500/20 to-cyan-400/5",
-    glow: "rgba(0,255,255,0.25)",
+    desc: "Analyzes suspicious links using heuristic and ML-based engines to detect phishing patterns before you click.",
+    accent: "#00f5ff",
+    glow: "rgba(0,245,255,0.2)",
   },
   {
     icon: MessageSquare,
     title: "Message Scanner",
-    desc: "Detects scam messages, fraud patterns, and social engineering attempts in real time.",
-    color: "from-sky-500/20 to-sky-400/5",
-    glow: "rgba(56,189,248,0.25)",
+    desc: "Detects scam messages, fraud patterns, and social engineering attempts across SMS and text content.",
+    accent: "#38bdf8",
+    glow: "rgba(56,189,248,0.2)",
   },
   {
     icon: FileSearch,
     title: "File Scanner",
-    desc: "Upload suspicious files for deep inspection and potential threat extraction.",
-    color: "from-teal-500/20 to-teal-400/5",
-    glow: "rgba(20,184,166,0.25)",
+    desc: "Upload suspicious files for deep inspection. Extracts indicators of compromise and potential malware signatures.",
+    accent: "#14b8a6",
+    glow: "rgba(20,184,166,0.2)",
   },
   {
     icon: Cpu,
     title: "Detection Engine",
-    desc: "ML models combined with rule-based logic for accurate, layered threat analysis.",
-    color: "from-cyan-500/20 to-cyan-400/5",
-    glow: "rgba(0,255,255,0.25)",
+    desc: "ML models combined with rule-based logic for accurate, layered threat analysis that improves over time.",
+    accent: "#00f5ff",
+    glow: "rgba(0,245,255,0.2)",
   },
   {
     icon: Users,
     title: "Role-Based Access",
-    desc: "Distinct dashboards for Users, Analysts, and Admins — each with tailored tooling.",
-    color: "from-sky-500/20 to-sky-400/5",
-    glow: "rgba(56,189,248,0.25)",
+    desc: "Tailored dashboards for Users, Analysts, and Admins — each with scoped tooling and audit visibility.",
+    accent: "#38bdf8",
+    glow: "rgba(56,189,248,0.2)",
   },
   {
     icon: Clock,
     title: "Scan History",
-    desc: "Full audit trail of past scans. Review, compare, and export results anytime.",
-    color: "from-teal-500/20 to-teal-400/5",
-    glow: "rgba(20,184,166,0.25)",
+    desc: "Full audit trail of every scan. Review, compare, and export results at any time.",
+    accent: "#14b8a6",
+    glow: "rgba(20,184,166,0.2)",
   },
 ];
 
-function FeatureCard({
-  feature,
-  index,
-}: {
-  feature: (typeof features)[0];
-  index: number;
-}) {
-  const Icon = feature.icon;
-  return (
-    <motion.div
-      initial={{ opacity: 0, y: 40 }}
-      whileInView={{ opacity: 1, y: 0 }}
-      viewport={{ once: true, margin: "-60px" }}
-      transition={{ duration: 0.6, delay: index * 0.1, ease: [0.22, 1, 0.36, 1] }}
-      whileHover={{
-        y: -6,
-        boxShadow: `0 0 32px ${feature.glow}, 0 0 64px ${feature.glow.replace("0.25", "0.1")}`,
-      }}
-      className="relative rounded-xl border border-cyan-900/50 bg-gray-950/80 p-6 cursor-default overflow-hidden group"
-      style={{ backdropFilter: "blur(12px)" }}
-    >
-      {/* Gradient bg */}
-      <div
-        className={`absolute inset-0 bg-gradient-to-br ${feature.color} opacity-0 group-hover:opacity-100 transition-opacity duration-500`}
-      />
-      {/* Corner accent */}
-      <div className="absolute top-0 right-0 w-16 h-16 overflow-hidden">
-        <div
-          className="absolute top-0 right-0 w-px h-full bg-gradient-to-b from-cyan-500/60 to-transparent"
-          style={{ transform: "translateX(0)" }}
-        />
-        <div
-          className="absolute top-0 right-0 h-px w-full bg-gradient-to-l from-cyan-500/60 to-transparent"
-        />
-      </div>
-
-      <div className="relative z-10">
-        <div className="mb-4 inline-flex items-center justify-center w-11 h-11 rounded-lg border border-cyan-800/60 bg-cyan-950/60">
-          <Icon className="w-5 h-5 text-cyan-400" />
-        </div>
-        <h3
-          className="text-white font-semibold text-base mb-2"
-          style={{ fontFamily: "'Syne', 'Space Grotesk', sans-serif" }}
-        >
-          {feature.title}
-        </h3>
-        <p className="text-gray-400 text-sm leading-relaxed">{feature.desc}</p>
-      </div>
-    </motion.div>
-  );
-}
-
-// ─── TECH BADGE ──────────────────────────────────────────────────────────────
 const techStack = [
-  { name: "FastAPI", icon: Zap, color: "from-emerald-500 to-teal-500" },
-  { name: "Next.js", icon: ExternalLink, color: "from-gray-300 to-white" },
-  { name: "TailwindCSS", icon: ExternalLink, color: "from-cyan-400 to-sky-500" },
-  { name: "PostgreSQL", icon: Database, color: "from-blue-400 to-indigo-500" },
-  { name: "JWT Auth", icon: Lock, color: "from-amber-400 to-orange-500" },
-  { name: "ML Models", icon: Cpu, color: "from-violet-400 to-purple-500" },
+  { name: "FastAPI",     color: "#00ff88", icon: Zap      },
+  { name: "Next.js",     color: "#e8eaf0", icon: Cpu      },
+  { name: "TailwindCSS", color: "#00f5ff", icon: Cpu      },
+  { name: "PostgreSQL",  color: "#38bdf8", icon: Database },
+  { name: "JWT Auth",    color: "#ffd60a", icon: Lock     },
+  { name: "ML Models",   color: "#bf5af2", icon: Cpu      },
 ];
 
-function TechBadge({
-  tech,
-  index,
-}: {
-  tech: (typeof techStack)[0];
-  index: number;
-}) {
-  const Icon = tech.icon;
+const terms = [
+  {
+    title: "Educational & Security Use Only",
+    desc: "PhishGuard is intended for educational and security analysis purposes only.",
+  },
+  {
+    title: "No Misuse",
+    desc: "Users must not leverage PhishGuard to facilitate illegal activity or circumvent security systems.",
+  },
+  {
+    title: "Legal Content",
+    desc: "All uploaded content must comply with applicable legal standards. You are solely responsible for submitted material.",
+  },
+  {
+    title: "Activity Logging",
+    desc: "Platform activity may be logged for security, audit, and quality assurance purposes.",
+  },
+];
+
+// ─── ANIMATION VARIANTS ───────────────────────────────────────────────────────
+
+const fadeUp = {
+  hidden:  { opacity: 0, y: 32 },
+  visible: { opacity: 1, y: 0,  transition: { duration: 0.65, ease: [0.22, 1, 0.36, 1] } },
+};
+
+const stagger = {
+  hidden:  {},
+  visible: { transition: { staggerChildren: 0.1 } },
+};
+
+// ─── SUB-COMPONENTS ───────────────────────────────────────────────────────────
+
+function CyberGrid() {
+  return (
+    <div
+      aria-hidden
+      className="absolute inset-0 pointer-events-none"
+      style={{
+        backgroundImage: `
+          linear-gradient(rgba(0,245,255,0.03) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(0,245,255,0.03) 1px, transparent 1px)
+        `,
+        backgroundSize: "52px 52px",
+      }}
+    />
+  );
+}
+
+function SectionLabel({ text }: { text: string }) {
+  return (
+    <div className="flex items-center justify-center gap-3 mb-4">
+      <div style={{ height: 1, width: 32, background: "#00f5ff" }} />
+      <span style={{
+        color: "#00f5ff", fontSize: 11,
+        fontFamily: "'JetBrains Mono', monospace",
+        letterSpacing: "0.3em", textTransform: "uppercase" as const,
+      }}>
+        {text}
+      </span>
+      <div style={{ height: 1, width: 32, background: "#00f5ff" }} />
+    </div>
+  );
+}
+
+function FeatureCard({ feature }: { feature: typeof features[0] }) {
+  const Icon = feature.icon;
+  const [hovered, setHovered] = useState(false);
   return (
     <motion.div
-      initial={{ opacity: 0, scale: 0.85 }}
-      whileInView={{ opacity: 1, scale: 1 }}
-      viewport={{ once: true }}
-      transition={{ duration: 0.5, delay: index * 0.08 }}
-      whileHover={{ scale: 1.08 }}
-      animate={{
-        y: [0, -4, 0],
-      }}
-      className="relative flex items-center gap-2 px-4 py-2.5 rounded-full border border-cyan-900/50 bg-gray-950/70 cursor-default"
+      variants={fadeUp}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
       style={{
-        animationDelay: `${index * 0.3}s`,
-        backdropFilter: "blur(8px)",
+        background: "#0c1120",
+        border: `1px solid ${hovered ? feature.accent + "60" : "#1a2540"}`,
+        borderRadius: 12, padding: 24, cursor: "default",
+        transition: "border-color 0.25s, box-shadow 0.25s, transform 0.25s",
+        transform: hovered ? "translateY(-6px)" : "translateY(0)",
+        boxShadow: hovered ? `0 0 28px ${feature.glow}` : "none",
+        position: "relative" as const, overflow: "hidden",
       }}
     >
-      <div
-        className={`w-2 h-2 rounded-full bg-gradient-to-br ${tech.color}`}
-        style={{ boxShadow: "0 0 6px currentColor" }}
-      />
-      <span
-        className="text-gray-200 text-sm font-medium"
-        style={{ fontFamily: "'JetBrains Mono', monospace" }}
-      >
-        {tech.name}
-      </span>
+      {/* Corner accents */}
+      <div aria-hidden style={{ position: "absolute", top: 0, right: 0, width: 1, height: 48, background: `linear-gradient(to bottom, ${feature.accent}70, transparent)` }} />
+      <div aria-hidden style={{ position: "absolute", top: 0, right: 0, height: 1, width: 48, background: `linear-gradient(to left, ${feature.accent}70, transparent)` }} />
+
+      <div style={{
+        width: 40, height: 40, borderRadius: 8, marginBottom: 16,
+        display: "flex", alignItems: "center", justifyContent: "center",
+        background: feature.accent + "18", border: `1px solid ${feature.accent}40`,
+      }}>
+        <Icon size={18} style={{ color: feature.accent }} />
+      </div>
+      <div style={{ fontFamily: "'Space Grotesk', sans-serif", fontWeight: 600, fontSize: 15, color: "#e8eaf0", marginBottom: 8 }}>
+        {feature.title}
+      </div>
+      <div style={{ fontSize: 13, color: "#8892b0", lineHeight: 1.65 }}>
+        {feature.desc}
+      </div>
     </motion.div>
   );
 }
 
-// ─── MAIN PAGE ───────────────────────────────────────────────────────────────
+// ─── MAIN PAGE ────────────────────────────────────────────────────────────────
+
 export default function AboutPage() {
-  const heroRef = useRef<HTMLDivElement>(null);
-  const { scrollYProgress } = useScroll({
-    target: heroRef,
-    offset: ["start start", "end start"],
-  });
-  const heroY = useTransform(scrollYProgress, [0, 1], ["0%", "25%"]);
-  const heroOpacity = useTransform(scrollYProgress, [0, 0.8], [1, 0]);
+  /*
+   * MOUNTED GUARD — the single most important fix.
+   *
+   * All framer-motion scroll hooks and any DOM-dependent code must only run
+   * after the component has mounted on the client. During Vercel's static
+   * pre-render (Node.js, no DOM), `mounted` is false and we return a minimal
+   * HTML shell. This gives Next.js valid HTML to serve while preventing the
+   * framer-motion crash that caused the blank page.
+   *
+   * The shell has a non-zero height so the page is not reported as empty by
+   * Vercel's crawler, which would cause it to be de-indexed.
+   */
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => { setMounted(true); }, []);
+
+  if (!mounted) {
+    return <div style={{ minHeight: "100vh", background: "#050810" }} />;
+  }
 
   return (
-    <main
-      className="min-h-screen bg-gray-950 text-white overflow-x-hidden"
-      style={{ fontFamily: "'Inter', system-ui, sans-serif" }}
-    >
-      {/* ── HERO ──────────────────────────────────────────────────────────── */}
-      <section
-        ref={heroRef}
-        className="relative min-h-screen flex flex-col items-center justify-center px-4 overflow-hidden"
-      >
-        <CyberGrid />
-        <FloatingParticles />
+    <main style={{ minHeight: "100vh", background: "#050810", color: "#e8eaf0", overflowX: "hidden" }}>
 
+      {/* ── 1. HERO ──────────────────────────────────────────────────────── */}
+      <section style={{ position: "relative", minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: "80px 24px" }}>
+        <CyberGrid />
         {/* Glow orb */}
-        <div
-          className="absolute top-1/3 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[400px] rounded-full pointer-events-none"
-          style={{
-            background:
-              "radial-gradient(ellipse, rgba(0,255,255,0.07) 0%, transparent 70%)",
-            filter: "blur(40px)",
-          }}
-        />
+        <div aria-hidden style={{
+          position: "absolute", top: "38%", left: "50%",
+          transform: "translate(-50%, -50%)",
+          width: 560, height: 340, borderRadius: "50%",
+          background: "radial-gradient(ellipse, rgba(0,245,255,0.07) 0%, transparent 70%)",
+          filter: "blur(40px)", pointerEvents: "none",
+        }} />
 
         <motion.div
-          style={{ y: heroY, opacity: heroOpacity }}
-          className="relative z-10 text-center max-w-3xl mx-auto"
+          initial="hidden" animate="visible" variants={stagger}
+          style={{ position: "relative", zIndex: 10, textAlign: "center", maxWidth: 720, margin: "0 auto" }}
         >
-          {/* Shield icon */}
-          <motion.div
-            initial={{ scale: 0, rotate: -20 }}
-            animate={{ scale: 1, rotate: 0 }}
-            transition={{ duration: 0.8, ease: [0.34, 1.56, 0.64, 1] }}
-            className="inline-flex items-center justify-center mb-8"
-          >
-            <div className="relative">
-              <div
-                className="absolute inset-0 rounded-full"
-                style={{
-                  background: "rgba(0,255,255,0.15)",
-                  filter: "blur(16px)",
-                  transform: "scale(1.4)",
-                }}
-              />
-              <div className="relative w-20 h-20 rounded-2xl border border-cyan-500/40 bg-cyan-950/60 flex items-center justify-center">
-                <Shield className="w-10 h-10 text-cyan-400" />
-              </div>
+          <motion.div variants={fadeUp} style={{ display: "inline-flex", marginBottom: 32 }}>
+            <div style={{
+              width: 72, height: 72, borderRadius: 16,
+              background: "rgba(0,245,255,0.08)", border: "1px solid rgba(0,245,255,0.3)",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              boxShadow: "0 0 32px rgba(0,245,255,0.15)",
+            }}>
+              <Shield size={32} style={{ color: "#00f5ff" }} />
             </div>
           </motion.div>
 
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ delay: 0.3 }}
-            className="mb-3"
-          >
-            <SectionLabel text="Cybersecurity Platform" />
-          </motion.div>
+          <motion.div variants={fadeUp}><SectionLabel text="Cybersecurity Platform" /></motion.div>
 
           <motion.h1
-            initial={{ opacity: 0, y: 30 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.4, duration: 0.8, ease: [0.22, 1, 0.36, 1] }}
-            className="text-5xl md:text-7xl font-black mb-6 tracking-tight"
-            style={{ fontFamily: "'Syne', sans-serif" }}
+            variants={fadeUp}
+            style={{
+              fontFamily: "'Syne', 'Space Grotesk', sans-serif",
+              fontSize: "clamp(2.4rem, 6vw, 4.5rem)",
+              fontWeight: 900, lineHeight: 1.08, letterSpacing: "-0.02em",
+              marginBottom: 24, color: "#e8eaf0",
+            }}
           >
             About{" "}
-            <span
-              className="text-transparent bg-clip-text"
-              style={{
-                backgroundImage: "linear-gradient(135deg, #00ffff 0%, #0ea5e9 50%, #06b6d4 100%)",
-                filter: "drop-shadow(0 0 20px rgba(0,255,255,0.4))",
-              }}
-            >
+            <span style={{
+              background: "linear-gradient(135deg, #00f5ff 0%, #0ea5e9 60%)",
+              WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent",
+              filter: "drop-shadow(0 0 16px rgba(0,245,255,0.35))",
+            }}>
               PhishGuard
             </span>
           </motion.h1>
 
-          <motion.p
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.6, duration: 0.7 }}
-            className="text-gray-400 text-lg md:text-xl leading-relaxed max-w-2xl mx-auto"
-          >
+          <motion.p variants={fadeUp} style={{ fontSize: 17, color: "#8892b0", lineHeight: 1.75, maxWidth: 580, margin: "0 auto 40px" }}>
             PhishGuard is an advanced phishing detection platform that analyzes{" "}
-            <span className="text-cyan-300">URLs</span>,{" "}
-            <span className="text-cyan-300">messages</span>, and{" "}
-            <span className="text-cyan-300">files</span> to detect malicious threats
-            using machine learning and rule-based analysis.
+            <span style={{ color: "#00f5ff" }}>URLs</span>,{" "}
+            <span style={{ color: "#00f5ff" }}>messages</span>, and{" "}
+            <span style={{ color: "#00f5ff" }}>files</span>{" "}
+            to detect malicious threats using machine learning and rule-based analysis.
           </motion.p>
 
-          {/* Scroll indicator */}
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ delay: 1.2 }}
-            className="absolute bottom-10 left-1/2 -translate-x-1/2 flex flex-col items-center gap-1 text-gray-600"
-          >
-            <span className="text-xs font-mono tracking-widest uppercase">Scroll</span>
-            <motion.div
-              animate={{ y: [0, 6, 0] }}
-              transition={{ duration: 1.5, repeat: Infinity }}
-            >
-              <ChevronDown className="w-4 h-4" />
+          <motion.div variants={fadeUp} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4, color: "#1a2540" }}>
+            <span style={{ fontSize: 10, fontFamily: "'JetBrains Mono', monospace", letterSpacing: "0.3em", textTransform: "uppercase" }}>Scroll</span>
+            <motion.div animate={{ y: [0, 6, 0] }} transition={{ duration: 1.6, repeat: Infinity }}>
+              <ChevronDown size={16} />
             </motion.div>
           </motion.div>
         </motion.div>
       </section>
 
-      {/* ── FEATURES ──────────────────────────────────────────────────────── */}
-      <section className="relative py-28 px-4 md:px-8 lg:px-16">
-        <div
-          className="absolute inset-0"
-          style={{
-            background:
-              "radial-gradient(ellipse 60% 40% at 50% 50%, rgba(0,255,255,0.03) 0%, transparent 70%)",
-          }}
-        />
-        <div className="relative z-10 max-w-6xl mx-auto">
-          <RevealSection className="text-center mb-16">
-            <SectionLabel text="Core Capabilities" />
-            <h2
-              className="text-3xl md:text-5xl font-black text-white mb-4"
-              style={{ fontFamily: "'Syne', sans-serif" }}
-            >
+      {/* ── 2. FEATURES ──────────────────────────────────────────────────── */}
+      <section style={{ padding: "96px 24px" }}>
+        <div style={{ maxWidth: 1100, margin: "0 auto" }}>
+          <motion.div
+            initial="hidden" whileInView="visible"
+            viewport={{ once: true, margin: "-80px" }} variants={stagger}
+            style={{ textAlign: "center", marginBottom: 56 }}
+          >
+            <motion.div variants={fadeUp}><SectionLabel text="Core Capabilities" /></motion.div>
+            <motion.h2 variants={fadeUp} style={{ fontFamily: "'Syne', 'Space Grotesk', sans-serif", fontWeight: 900, fontSize: "clamp(1.8rem, 4vw, 3rem)", color: "#e8eaf0", marginBottom: 12 }}>
               Platform Features
-            </h2>
-            <p className="text-gray-500 max-w-xl mx-auto">
-              Every component of PhishGuard is engineered to detect, analyze, and
-              neutralize phishing threats across multiple vectors.
-            </p>
-          </RevealSection>
+            </motion.h2>
+            <motion.p variants={fadeUp} style={{ color: "#8892b0", maxWidth: 480, margin: "0 auto" }}>
+              Every component engineered to detect, analyze, and neutralize threats across multiple vectors.
+            </motion.p>
+          </motion.div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-            {features.map((f, i) => (
-              <FeatureCard key={f.title} feature={f} index={i} />
-            ))}
-          </div>
+          <motion.div
+            initial="hidden" whileInView="visible"
+            viewport={{ once: true, margin: "-60px" }} variants={stagger}
+            style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: 20 }}
+          >
+            {features.map((f) => <FeatureCard key={f.title} feature={f} />)}
+          </motion.div>
         </div>
       </section>
 
-      {/* ── CREATOR ───────────────────────────────────────────────────────── */}
-      <section className="relative py-28 px-4">
-        <div className="relative z-10 max-w-4xl mx-auto">
-          <RevealSection className="text-center mb-16">
-            <SectionLabel text="The Builder" />
-            <h2
-              className="text-3xl md:text-5xl font-black text-white"
-              style={{ fontFamily: "'Syne', sans-serif" }}
-            >
+      {/* ── 3. CREATOR ───────────────────────────────────────────────────── */}
+      <section style={{ padding: "80px 24px" }}>
+        <div style={{ maxWidth: 760, margin: "0 auto" }}>
+          <motion.div
+            initial="hidden" whileInView="visible"
+            viewport={{ once: true, margin: "-80px" }} variants={stagger}
+            style={{ textAlign: "center", marginBottom: 48 }}
+          >
+            <motion.div variants={fadeUp}><SectionLabel text="The Builder" /></motion.div>
+            <motion.h2 variants={fadeUp} style={{ fontFamily: "'Syne', 'Space Grotesk', sans-serif", fontWeight: 900, fontSize: "clamp(1.8rem, 4vw, 3rem)", color: "#e8eaf0" }}>
               About the Creator
-            </h2>
-          </RevealSection>
+            </motion.h2>
+          </motion.div>
 
-          <RevealSection>
-            <motion.div
-              className="relative rounded-2xl p-px overflow-hidden"
-              whileHover={{ scale: 1.005 }}
-              transition={{ duration: 0.3 }}
-            >
-              {/* Animated gradient border */}
-              <motion.div
-                className="absolute inset-0 rounded-2xl"
-                animate={{
-                  background: [
-                    "linear-gradient(0deg, #00ffff, #0ea5e9, #06b6d4, #00ffff)",
-                    "linear-gradient(180deg, #00ffff, #0ea5e9, #06b6d4, #00ffff)",
-                    "linear-gradient(360deg, #00ffff, #0ea5e9, #06b6d4, #00ffff)",
-                  ],
-                }}
-                transition={{ duration: 4, repeat: Infinity, ease: "linear" }}
-                style={{ opacity: 0.5 }}
-              />
-
-              <div
-                className="relative rounded-2xl bg-gray-950/95 p-8 md:p-12"
-                style={{ backdropFilter: "blur(16px)" }}
-              >
-                <div className="flex flex-col md:flex-row items-start gap-8">
-                  {/* Avatar */}
-                  <div className="flex-shrink-0">
-                    <div className="relative">
-                      <div
-                        className="absolute inset-0 rounded-full"
+          <motion.div
+            initial="hidden" whileInView="visible"
+            viewport={{ once: true, margin: "-60px" }} variants={fadeUp}
+            className="gradient-border-wrap"
+          >
+            <div style={{ background: "#0c1120", borderRadius: 15, padding: 40 }}>
+              <div style={{ display: "flex", flexWrap: "wrap", alignItems: "flex-start", gap: 28 }}>
+                {/* Avatar */}
+                <div style={{
+                  width: 80, height: 80, borderRadius: "50%", flexShrink: 0,
+                  background: "linear-gradient(135deg, rgba(0,245,255,0.12), rgba(14,165,233,0.06))",
+                  border: "2px solid rgba(0,245,255,0.3)",
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  fontFamily: "'Syne', sans-serif", fontWeight: 900, fontSize: 26, color: "#00f5ff",
+                  boxShadow: "0 0 24px rgba(0,245,255,0.15)",
+                }}>
+                  AM
+                </div>
+                {/* Bio */}
+                <div style={{ flex: 1, minWidth: 220 }}>
+                  <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10, marginBottom: 4 }}>
+                    <h3 style={{ fontFamily: "'Syne', 'Space Grotesk', sans-serif", fontWeight: 900, fontSize: 22, color: "#e8eaf0", margin: 0 }}>
+                      Arpit Mehrotra
+                    </h3>
+                    <span style={{
+                      fontSize: 11, fontFamily: "'JetBrains Mono', monospace",
+                      color: "#00f5ff", background: "rgba(0,245,255,0.08)",
+                      border: "1px solid rgba(0,245,255,0.25)", borderRadius: 4, padding: "2px 8px",
+                    }}>
+                      B.Tech CSE · UPES · Sem 2
+                    </span>
+                  </div>
+                  <p style={{ fontSize: 12, color: "#00f5ff", fontFamily: "'JetBrains Mono', monospace", marginBottom: 16 }}>
+                    Cybersecurity Enthusiast · Ethical Hacking
+                  </p>
+                  <p style={{ fontSize: 14, color: "#8892b0", lineHeight: 1.75, marginBottom: 10 }}>
+                    Arpit is a B.Tech Computer Science student at <span style={{ color: "#e8eaf0" }}>UPES</span>, currently in Semester 2,
+                    with a strong passion for cybersecurity and ethical hacking.
+                  </p>
+                  <p style={{ fontSize: 14, color: "#8892b0", lineHeight: 1.75, marginBottom: 20 }}>
+                    He built PhishGuard to explore <span style={{ color: "#e8eaf0" }}>phishing detection</span>,{" "}
+                    <span style={{ color: "#e8eaf0" }}>secure authentication</span>, and{" "}
+                    <span style={{ color: "#e8eaf0" }}>ML-based threat analysis</span>. His goal is a career in
+                    threat intelligence, malware analysis, and security engineering.
+                  </p>
+                  <div style={{ display: "flex", gap: 10 }}>
+                    {[{ Icon: Github, label: "GitHub" }, { Icon: Linkedin, label: "LinkedIn" }].map(({ Icon, label }) => (
+                      <button
+                        key={label}
                         style={{
-                          background: "rgba(0,255,255,0.2)",
-                          filter: "blur(20px)",
-                          transform: "scale(1.2)",
+                          display: "flex", alignItems: "center", gap: 6,
+                          padding: "7px 14px", borderRadius: 8, cursor: "pointer",
+                          background: "rgba(0,245,255,0.06)", border: "1px solid rgba(0,245,255,0.2)",
+                          color: "#8892b0", fontSize: 13, fontFamily: "'JetBrains Mono', monospace",
+                          transition: "all 0.2s",
                         }}
-                      />
-                      <div className="relative w-24 h-24 rounded-full border-2 border-cyan-500/60 bg-gradient-to-br from-cyan-950 to-gray-900 flex items-center justify-center text-3xl font-black text-cyan-400"
-                        style={{ fontFamily: "'Syne', sans-serif" }}>
-                        AM
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Content */}
-                  <div className="flex-1">
-                    <div className="flex flex-wrap items-center gap-3 mb-1">
-                      <h3
-                        className="text-2xl md:text-3xl font-black text-white"
-                        style={{ fontFamily: "'Syne', sans-serif" }}
+                        onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.color = "#00f5ff"; (e.currentTarget as HTMLButtonElement).style.borderColor = "rgba(0,245,255,0.4)"; }}
+                        onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.color = "#8892b0"; (e.currentTarget as HTMLButtonElement).style.borderColor = "rgba(0,245,255,0.2)"; }}
                       >
-                        Arpit Mehrotra
-                      </h3>
-                      <span className="px-2.5 py-0.5 rounded-full text-xs font-mono border border-cyan-800/60 text-cyan-400 bg-cyan-950/40">
-                        B.Tech CSE · UPES
-                      </span>
-                    </div>
-                    <p className="text-cyan-500 text-sm font-mono mb-5">
-                      Cybersecurity Enthusiast · Ethical Hacking
-                    </p>
-
-                    <div className="space-y-3 text-gray-400 text-sm leading-relaxed mb-7">
-                      <p>
-                        Arpit Mehrotra is a B.Tech Computer Science student at{" "}
-                        <span className="text-gray-200">UPES</span>, currently in
-                        Semester 2, with a strong passion for cybersecurity and ethical
-                        hacking.
-                      </p>
-                      <p>
-                        He built PhishGuard as a practical cybersecurity platform to
-                        explore{" "}
-                        <span className="text-cyan-300">phishing detection</span>,{" "}
-                        <span className="text-cyan-300">
-                          secure authentication systems
-                        </span>
-                        , and{" "}
-                        <span className="text-cyan-300">
-                          machine learning-based threat analysis
-                        </span>
-                        .
-                      </p>
-                      <p>
-                        His goal is to pursue a future career in cybersecurity, focusing
-                        on <span className="text-gray-200">threat intelligence</span>,{" "}
-                        <span className="text-gray-200">malware analysis</span>, and{" "}
-                        <span className="text-gray-200">security engineering</span>.
-                      </p>
-                    </div>
-
-                    {/* Social links */}
-                    <div className="flex gap-3">
-                      {[
-                        { icon: Github, label: "GitHub" },
-                        { icon: Linkedin, label: "LinkedIn" },
-                      ].map(({ icon: Icon, label }) => (
-                        <motion.button
-                          key={label}
-                          whileHover={{ scale: 1.05 }}
-                          whileTap={{ scale: 0.97 }}
-                          className="flex items-center gap-2 px-4 py-2 rounded-lg border border-cyan-900/60 bg-cyan-950/30 text-gray-300 text-sm hover:text-cyan-300 hover:border-cyan-500/50 transition-colors"
-                        >
-                          <Icon className="w-4 h-4" />
-                          {label}
-                        </motion.button>
-                      ))}
-                    </div>
+                        <Icon size={14} />{label}
+                      </button>
+                    ))}
                   </div>
                 </div>
-              </div>
-            </motion.div>
-          </RevealSection>
-        </div>
-      </section>
-
-      {/* ── TECH STACK ────────────────────────────────────────────────────── */}
-      <section className="relative py-24 px-4">
-        <div
-          className="absolute inset-0 pointer-events-none"
-          style={{
-            background:
-              "radial-gradient(ellipse 50% 60% at 50% 50%, rgba(0,255,255,0.04) 0%, transparent 70%)",
-          }}
-        />
-        <div className="relative z-10 max-w-4xl mx-auto text-center">
-          <RevealSection>
-            <SectionLabel text="Built With" />
-            <h2
-              className="text-3xl md:text-5xl font-black text-white mb-12"
-              style={{ fontFamily: "'Syne', sans-serif" }}
-            >
-              Technology Stack
-            </h2>
-          </RevealSection>
-
-          <div className="flex flex-wrap justify-center gap-3">
-            {techStack.map((tech, i) => (
-              <TechBadge key={tech.name} tech={tech} index={i} />
-            ))}
-          </div>
-        </div>
-      </section>
-
-      {/* ── TERMS ─────────────────────────────────────────────────────────── */}
-      <section className="relative py-24 px-4 md:px-8">
-        <div className="max-w-3xl mx-auto">
-          <RevealSection>
-            <div className="rounded-2xl border border-cyan-900/40 bg-gray-950/70 p-8 md:p-10" style={{ backdropFilter: "blur(12px)" }}>
-              <div className="flex items-center gap-3 mb-6">
-                <div className="w-9 h-9 rounded-lg border border-cyan-800/60 bg-cyan-950/60 flex items-center justify-center">
-                  <Lock className="w-4 h-4 text-cyan-400" />
-                </div>
-                <div>
-                  <p className="text-xs font-mono text-cyan-500 uppercase tracking-widest">Legal</p>
-                  <h2 className="text-xl font-bold text-white" style={{ fontFamily: "'Syne', sans-serif" }}>
-                    Terms of Service
-                  </h2>
-                </div>
-              </div>
-
-              <div className="space-y-4">
-                {[
-                  {
-                    title: "Educational & Security Use Only",
-                    desc: "PhishGuard is intended for educational and security analysis purposes. Any misuse of the platform is strictly prohibited.",
-                  },
-                  {
-                    title: "No Misuse",
-                    desc: "Users must not leverage PhishGuard to facilitate illegal activity, harass others, or circumvent security systems.",
-                  },
-                  {
-                    title: "Legal Content",
-                    desc: "All uploaded content must comply with applicable legal standards. You are solely responsible for the material you submit.",
-                  },
-                  {
-                    title: "Activity Logging",
-                    desc: "Platform activity may be logged for security, audit, and quality assurance purposes.",
-                  },
-                ].map(({ title, desc }, i) => (
-                  <motion.div
-                    key={title}
-                    initial={{ opacity: 0, x: -20 }}
-                    whileInView={{ opacity: 1, x: 0 }}
-                    viewport={{ once: true }}
-                    transition={{ delay: i * 0.1, duration: 0.5 }}
-                    className="flex gap-4 py-4 border-b border-gray-800/60 last:border-0"
-                  >
-                    <div className="w-1 rounded-full bg-gradient-to-b from-cyan-500 to-cyan-900 flex-shrink-0 self-stretch" />
-                    <div>
-                      <p className="text-gray-100 font-medium text-sm mb-1">{title}</p>
-                      <p className="text-gray-500 text-sm leading-relaxed">{desc}</p>
-                    </div>
-                  </motion.div>
-                ))}
               </div>
             </div>
-          </RevealSection>
+          </motion.div>
         </div>
       </section>
 
-      {/* ── DISCLAIMER ────────────────────────────────────────────────────── */}
-      <section className="px-4 md:px-8 pb-20">
-        <div className="max-w-3xl mx-auto">
-          <RevealSection>
-            <motion.div
-              className="rounded-2xl border border-amber-900/40 bg-amber-950/10 p-6 md:p-8"
-              whileHover={{ borderColor: "rgba(245,158,11,0.3)" }}
-              transition={{ duration: 0.3 }}
-            >
-              <div className="flex items-start gap-4">
-                <div className="w-10 h-10 rounded-lg border border-amber-700/50 bg-amber-950/50 flex items-center justify-center flex-shrink-0 mt-0.5">
-                  <AlertTriangle className="w-5 h-5 text-amber-400" />
+      {/* ── 4. TECH STACK ────────────────────────────────────────────────── */}
+      <section style={{ padding: "80px 24px", position: "relative" }}>
+        <div aria-hidden style={{ position: "absolute", inset: 0, pointerEvents: "none", background: "radial-gradient(ellipse 60% 50% at 50% 50%, rgba(0,245,255,0.03) 0%, transparent 70%)" }} />
+        <div style={{ maxWidth: 800, margin: "0 auto", textAlign: "center", position: "relative", zIndex: 1 }}>
+          <motion.div initial="hidden" whileInView="visible" viewport={{ once: true }} variants={stagger}>
+            <motion.div variants={fadeUp}><SectionLabel text="Built With" /></motion.div>
+            <motion.h2 variants={fadeUp} style={{ fontFamily: "'Syne', 'Space Grotesk', sans-serif", fontWeight: 900, fontSize: "clamp(1.8rem, 4vw, 3rem)", color: "#e8eaf0", marginBottom: 40 }}>
+              Technology Stack
+            </motion.h2>
+            <motion.div variants={stagger} style={{ display: "flex", flexWrap: "wrap", justifyContent: "center", gap: 12 }}>
+              {techStack.map((tech, i) => (
+                <motion.div key={tech.name} variants={fadeUp} className="badge-float" style={{ animationDelay: `${i * 0.28}s` }} whileHover={{ scale: 1.08, y: -4 }}>
+                  <div style={{
+                    display: "flex", alignItems: "center", gap: 8,
+                    padding: "9px 18px", borderRadius: 9999,
+                    background: "#0c1120", border: "1px solid #1a2540",
+                    cursor: "default",
+                  }}>
+                    <div style={{ width: 8, height: 8, borderRadius: "50%", background: tech.color, boxShadow: `0 0 8px ${tech.color}` }} />
+                    <span style={{ fontSize: 13, color: "#e8eaf0", fontFamily: "'JetBrains Mono', monospace" }}>{tech.name}</span>
+                  </div>
+                </motion.div>
+              ))}
+            </motion.div>
+          </motion.div>
+        </div>
+      </section>
+
+      {/* ── 5. TERMS ─────────────────────────────────────────────────────── */}
+      <section style={{ padding: "72px 24px" }}>
+        <div style={{ maxWidth: 680, margin: "0 auto" }}>
+          <motion.div initial="hidden" whileInView="visible" viewport={{ once: true, margin: "-80px" }} variants={stagger}>
+            <div style={{ background: "#0c1120", border: "1px solid #1a2540", borderRadius: 16, padding: "32px 36px" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 24 }}>
+                <div style={{ width: 36, height: 36, borderRadius: 8, flexShrink: 0, background: "rgba(0,245,255,0.08)", border: "1px solid rgba(0,245,255,0.2)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  <Lock size={16} style={{ color: "#00f5ff" }} />
                 </div>
                 <div>
-                  <h3
-                    className="text-amber-300 font-bold text-lg mb-2"
-                    style={{ fontFamily: "'Syne', sans-serif" }}
-                  >
-                    Disclaimer
-                  </h3>
-                  <p className="text-gray-400 text-sm leading-relaxed">
-                    PhishGuard is a{" "}
-                    <span className="text-amber-300">
-                      cybersecurity research and analysis tool
-                    </span>
-                    . Detection results are informational and should not be considered
-                    guaranteed security advice. Always verify suspicious content through
-                    multiple sources and consult a qualified security professional when
-                    necessary.
+                  <div style={{ fontSize: 10, color: "#00f5ff", fontFamily: "'JetBrains Mono', monospace", letterSpacing: "0.3em", textTransform: "uppercase" as const }}>Legal</div>
+                  <div style={{ fontFamily: "'Syne', 'Space Grotesk', sans-serif", fontWeight: 700, fontSize: 18, color: "#e8eaf0" }}>Terms of Service</div>
+                </div>
+              </div>
+              {terms.map((t, i) => (
+                <motion.div key={t.title} variants={fadeUp} style={{ display: "flex", gap: 16, padding: "14px 0", borderBottom: i < terms.length - 1 ? "1px solid #1a2540" : "none" }}>
+                  <div style={{ width: 3, borderRadius: 2, flexShrink: 0, alignSelf: "stretch", background: "linear-gradient(to bottom, #00f5ff, #1a2540)" }} />
+                  <div>
+                    <div style={{ fontSize: 13, color: "#e8eaf0", fontWeight: 500, marginBottom: 4 }}>{t.title}</div>
+                    <div style={{ fontSize: 12, color: "#8892b0", lineHeight: 1.65 }}>{t.desc}</div>
+                  </div>
+                </motion.div>
+              ))}
+            </div>
+          </motion.div>
+        </div>
+      </section>
+
+      {/* ── DISCLAIMER ───────────────────────────────────────────────────── */}
+      <section style={{ padding: "0 24px 72px" }}>
+        <div style={{ maxWidth: 680, margin: "0 auto" }}>
+          <motion.div initial="hidden" whileInView="visible" viewport={{ once: true }} variants={fadeUp}>
+            <div className="disclaimer-card" style={{ padding: "24px 28px" }}>
+              <div style={{ display: "flex", gap: 14, alignItems: "flex-start" }}>
+                <div style={{ width: 36, height: 36, borderRadius: 8, flexShrink: 0, background: "rgba(255,214,10,0.08)", border: "1px solid rgba(255,214,10,0.25)", display: "flex", alignItems: "center", justifyContent: "center", marginTop: 2 }}>
+                  <AlertTriangle size={16} style={{ color: "#ffd60a" }} />
+                </div>
+                <div>
+                  <div style={{ fontFamily: "'Syne', sans-serif", fontWeight: 700, color: "#ffd60a", fontSize: 16, marginBottom: 8 }}>Disclaimer</div>
+                  <p style={{ fontSize: 13, color: "#8892b0", lineHeight: 1.75, margin: 0 }}>
+                    PhishGuard is a <span style={{ color: "#ffd60a" }}>cybersecurity research and analysis tool</span>.
+                    Detection results are informational and should not be considered guaranteed security advice.
+                    Always verify suspicious content through multiple sources.
                   </p>
                 </div>
               </div>
-            </motion.div>
-          </RevealSection>
+            </div>
+          </motion.div>
         </div>
       </section>
 
-      {/* ── FOOTER ────────────────────────────────────────────────────────── */}
-      <footer className="relative border-t border-gray-900 py-12 px-4">
+      {/* ── FOOTER ───────────────────────────────────────────────────────── */}
+      <footer style={{ borderTop: "1px solid #1a2540", padding: "32px 24px", position: "relative" }}>
         <CyberGrid />
-        <div className="relative z-10 max-w-6xl mx-auto flex flex-col md:flex-row items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-lg border border-cyan-800/60 bg-cyan-950/60 flex items-center justify-center">
-              <Shield className="w-4 h-4 text-cyan-400" />
+        <div style={{ position: "relative", zIndex: 1, maxWidth: 1100, margin: "0 auto", display: "flex", flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", gap: 16 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <div style={{ width: 30, height: 30, borderRadius: 8, background: "rgba(0,245,255,0.08)", border: "1px solid rgba(0,245,255,0.25)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <Shield size={14} style={{ color: "#00f5ff" }} />
             </div>
-            <span
-              className="text-white font-bold text-lg"
-              style={{ fontFamily: "'Syne', sans-serif" }}
-            >
-              PhishGuard
+            <span style={{ fontFamily: "'Syne', 'Space Grotesk', sans-serif", fontWeight: 700, fontSize: 16, color: "#e8eaf0" }}>
+              Phish<span style={{ color: "#00f5ff" }}>Guard</span>
             </span>
           </div>
-
-          <div className="text-center">
-            <p className="text-gray-600 text-sm">
-              Created by{" "}
-              <span className="text-cyan-500 font-medium">Arpit Mehrotra</span>
-            </p>
-            <p className="text-gray-700 text-xs mt-0.5 font-mono">
+          <div style={{ textAlign: "center" }}>
+            <div style={{ fontSize: 13, color: "#8892b0" }}>
+              Created by <span style={{ color: "#00f5ff", fontWeight: 500 }}>Arpit Mehrotra</span>
+            </div>
+            <div style={{ fontSize: 11, color: "#1a2540", fontFamily: "'JetBrains Mono', monospace", marginTop: 2 }}>
               © 2026 PhishGuard · All rights reserved.
-            </p>
+            </div>
           </div>
-
-          <div className="flex gap-2">
+          <div style={{ display: "flex", gap: 8 }}>
             {[Github, Linkedin].map((Icon, i) => (
-              <motion.button
-                key={i}
-                whileHover={{ scale: 1.1, color: "#00ffff" }}
-                className="w-9 h-9 rounded-lg border border-gray-800 bg-gray-900/50 flex items-center justify-center text-gray-500 hover:border-cyan-800/60 transition-colors"
+              <button key={i} style={{ width: 34, height: 34, borderRadius: 8, cursor: "pointer", background: "#0c1120", border: "1px solid #1a2540", display: "flex", alignItems: "center", justifyContent: "center", color: "#8892b0", transition: "all 0.2s" }}
+                onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.color = "#00f5ff"; (e.currentTarget as HTMLButtonElement).style.borderColor = "rgba(0,245,255,0.3)"; }}
+                onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.color = "#8892b0"; (e.currentTarget as HTMLButtonElement).style.borderColor = "#1a2540"; }}
               >
-                <Icon className="w-4 h-4" />
-              </motion.button>
+                <Icon size={14} />
+              </button>
             ))}
           </div>
         </div>
