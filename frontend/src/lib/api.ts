@@ -27,16 +27,21 @@ export const api = axios.create({
 
 // Request interceptor — attach access token
 api.interceptors.request.use((config) => {
-  if (typeof window !== "undefined") {
-    const token = localStorage.getItem("access_token");
-    if (token) {
-      config.headers.Authorization = `Bearer ${token}`;
-    }
+  const token =
+  typeof window !== "undefined"
+    ? localStorage.getItem("access_token")
+    : null;
+
+  if (token) {
+    config.headers = config.headers ?? {};
+    config.headers.Authorization = `Bearer ${token}`;
   }
+
   return config;
 });
 
 // Response interceptor — handle 401 by refreshing token
+
 api.interceptors.response.use(
   (res) => res,
   async (error) => {
@@ -51,6 +56,7 @@ api.interceptors.response.use(
         });
         localStorage.setItem("access_token", data.access_token);
         localStorage.setItem("refresh_token", data.refresh_token);
+        originalRequest.headers = originalRequest.headers ?? {};
         originalRequest.headers.Authorization = `Bearer ${data.access_token}`;
         return api(originalRequest);
       } catch (_) {
