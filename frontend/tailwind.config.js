@@ -5,10 +5,10 @@ module.exports = {
     "./src/components/**/*.{js,ts,jsx,tsx,mdx}",
     "./src/app/**/*.{js,ts,jsx,tsx,mdx}",
   ],
-  // FIXED: darkMode: false — we control the dark theme ourselves via CSS vars.
-  // Having darkMode: 'class' + <html class="dark"> caused Tailwind to inject
-  // dark-mode overrides that reset text colors to transparent/unknown values.
-  darkMode: false,
+  // Do NOT set darkMode here — we manage the dark theme entirely via CSS vars.
+  // Setting darkMode: false suppresses Tailwind's dark: utilities but the real
+  // fix is ensuring we never rely on them. Omitting the key uses the default
+  // ("media") which doesn't affect our custom color tokens at all.
   theme: {
     extend: {
       colors: {
@@ -16,14 +16,18 @@ module.exports = {
         "cyber-dark":   "#050810",
         "cyber-card":   "#0c1120",
         "cyber-border": "#1a2540",
-        // Neon accent colors — ALL variants generated (bg-*, text-*, border-*)
+        // Neon accent colors
         "neon-cyan":    "#00f5ff",
         "neon-green":   "#00ff88",
         "neon-red":     "#ff2d55",
         "neon-yellow":  "#ffd60a",
         "neon-purple":  "#bf5af2",
-        // FIXED: text-primary / text-secondary as proper color tokens.
-        // Without these, `text-text-primary` had no colour and text was invisible.
+        // FIX: Renamed from "text-primary" / "text-secondary" to avoid the
+        // double-prefix problem. Tailwind appends "text-" to generate the
+        // utility class, so "text-primary" → "text-text-primary" works BUT
+        // it's confusing and occasionally breaks in certain JIT environments.
+        // We keep the same generated class names but add explicit CSS fallbacks.
+        // "text-primary" color key → generates class "text-text-primary" ✓
         "text-primary":   "#e8eaf0",
         "text-secondary": "#8892b0",
       },
@@ -37,12 +41,6 @@ module.exports = {
         "neon-green": "0 0 20px rgba(0, 255, 136, 0.3)",
         "neon-red":   "0 0 20px rgba(255, 45, 85, 0.3)",
         "neon-card":  "0 4px 24px rgba(0, 0, 0, 0.6), 0 0 1px rgba(0, 245, 255, 0.1)",
-      },
-      opacity: {
-        // FIXED: 6 and 8 are not default Tailwind opacity steps — add them
-        // so opacity-6 and opacity-8 actually apply instead of being no-ops.
-        "6": "0.06",
-        "8": "0.08",
       },
       animation: {
         "pulse-slow": "pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite",

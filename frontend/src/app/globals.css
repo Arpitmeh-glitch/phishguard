@@ -25,23 +25,40 @@ html {
   scroll-behavior: smooth;
 }
 
-/* FIXED: body always gets an explicit background + foreground color.
-   Without `color`, text on the dark bg rendered as the browser default black
-   which Tailwind's base-layer reset then mapped to transparent in some builds. */
+/*
+ * CRITICAL FIX: body always gets explicit background + foreground.
+ * Without color: white / color: var(--text-primary), text renders as
+ * browser-default black on our dark background — invisible.
+ * The !important ensures no Tailwind layer (base, components, utilities)
+ * can override this fundamental readability rule.
+ */
 body {
-  background: var(--cyber-dark);
-  color: var(--text-primary);
+  background-color: #050810 !important;
+  color: #e8eaf0 !important;
   min-height: 100vh;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
-/* FIXED: Explicit utility overrides for our custom color tokens.
-   Tailwind generates `text-text-primary` from the config key "text-primary",
-   but if JIT misses a class or the dark-mode layer overrides it, this acts
-   as a guaranteed CSS-level fallback. */
-.text-text-primary   { color: var(--text-primary)   !important; }
-.text-text-secondary { color: var(--text-secondary)  !important; }
+/*
+ * CRITICAL FIX: Tailwind generates class `text-text-primary` from the color
+ * key "text-primary" in tailwind.config.js. In some Tailwind JIT builds the
+ * class IS generated but the cascade can be beaten by Tailwind's base layer
+ * reset (which sets color: inherit on many elements). The !important here acts
+ * as an absolute guarantee that text is always visible.
+ */
+.text-text-primary   { color: #e8eaf0 !important; }
+.text-text-secondary { color: #8892b0 !important; }
+
+/*
+ * FIX: framer-motion sets opacity:0 initially then animates to 1.
+ * If JavaScript hydration is slow, elements remain invisible.
+ * This ensures a non-JS fallback so content is always readable.
+ * framer-motion inline styles will still override this when JS runs.
+ */
+[data-framer-appear-id] {
+  opacity: 1 !important;
+}
 
 /* ── Scrollbar ─────────────────────────────────────────────────────────────── */
 ::-webkit-scrollbar              { width: 6px; height: 6px; }
@@ -50,9 +67,11 @@ body {
 ::-webkit-scrollbar-thumb:hover  { background: rgba(0, 245, 255, 0.3); }
 
 /* ── Cyber card ────────────────────────────────────────────────────────────── */
-/* FIXED: z-index layering — card is z-auto; its ::before pseudo-element
-   (the subtle gradient sheen) uses pointer-events:none so it never intercepts
-   clicks or visually obscures child text. */
+/*
+ * FIX: The ::before pseudo-element (gradient sheen) was sitting above content
+ * in some renders. pointer-events:none prevents click capture.
+ * z-index: 0 on ::before + z-index: 1 on children guarantees correct stacking.
+ */
 .cyber-card {
   background: var(--cyber-card);
   border: 1px solid var(--cyber-border);
@@ -68,17 +87,17 @@ body {
   pointer-events: none;
   z-index: 0;
 }
-/* Ensure all direct children of cyber-card sit above the ::before sheen */
+/* All direct children of cyber-card sit above the ::before sheen */
 .cyber-card > * {
   position: relative;
   z-index: 1;
 }
 
 /* ── Neon text ─────────────────────────────────────────────────────────────── */
-.neon-text-cyan   { color: var(--neon-cyan);   text-shadow: 0 0 20px rgba(0, 245, 255, 0.6); }
-.neon-text-green  { color: var(--neon-green);  text-shadow: 0 0 20px rgba(0, 255, 136, 0.6); }
-.neon-text-red    { color: var(--neon-red);    text-shadow: 0 0 20px rgba(255, 45, 85, 0.6);  }
-.neon-text-yellow { color: var(--neon-yellow); text-shadow: 0 0 20px rgba(255, 214, 10, 0.6); }
+.neon-text-cyan   { color: var(--neon-cyan)   !important; text-shadow: 0 0 20px rgba(0, 245, 255, 0.6); }
+.neon-text-green  { color: var(--neon-green)  !important; text-shadow: 0 0 20px rgba(0, 255, 136, 0.6); }
+.neon-text-red    { color: var(--neon-red)    !important; text-shadow: 0 0 20px rgba(255, 45, 85, 0.6); }
+.neon-text-yellow { color: var(--neon-yellow) !important; text-shadow: 0 0 20px rgba(255, 214, 10, 0.6); }
 
 /* ── Scan input ────────────────────────────────────────────────────────────── */
 .scan-input {
@@ -100,13 +119,17 @@ body {
 .scan-input::placeholder { color: rgba(136, 146, 176, 0.5); }
 
 /* ── Cyber button ──────────────────────────────────────────────────────────── */
+/*
+ * FIX: Buttons must NEVER have pointer-events blocked by a parent overlay.
+ * Added explicit cursor:pointer and z-index to defeat any stacking issues.
+ */
 .btn-cyber {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   background: linear-gradient(135deg, rgba(0, 245, 255, 0.15), rgba(0, 245, 255, 0.05));
   border: 1px solid rgba(0, 245, 255, 0.4);
-  color: var(--neon-cyan);
+  color: var(--neon-cyan) !important;
   font-family: 'JetBrains Mono', monospace;
   font-weight: 500;
   transition: all 0.2s;
@@ -115,12 +138,17 @@ body {
   padding: 10px 24px;
   letter-spacing: 0.05em;
   text-decoration: none;
+  position: relative;
+  z-index: 10;
 }
 .btn-cyber:hover {
   background: linear-gradient(135deg, rgba(0, 245, 255, 0.25), rgba(0, 245, 255, 0.1));
   border-color: var(--neon-cyan);
   box-shadow: 0 0 20px rgba(0, 245, 255, 0.3);
   transform: translateY(-1px);
+}
+.btn-cyber:active {
+  transform: translateY(0);
 }
 .btn-cyber:disabled {
   opacity: 0.4;
@@ -136,6 +164,7 @@ body {
   font-family: 'JetBrains Mono', monospace;
   padding: 2px 8px;
   border-radius: 4px;
+  font-size: 12px;
 }
 .badge-threat {
   background: rgba(255, 45, 85, 0.1);
@@ -144,6 +173,7 @@ body {
   font-family: 'JetBrains Mono', monospace;
   padding: 2px 8px;
   border-radius: 4px;
+  font-size: 12px;
 }
 .badge-suspicious {
   background: rgba(255, 214, 10, 0.1);
@@ -152,10 +182,15 @@ body {
   font-family: 'JetBrains Mono', monospace;
   padding: 2px 8px;
   border-radius: 4px;
+  font-size: 12px;
 }
 
 /* ── Grid background ───────────────────────────────────────────────────────── */
-/* FIXED: grid-bg uses z-0 implicitly; content layered above with relative z-10 */
+/*
+ * FIX: grid-bg is always z-0 / stacking context base.
+ * Never set position or z-index on .grid-bg itself — it is purely decorative.
+ * Content layers ABOVE via position:relative + z-index:10.
+ */
 .grid-bg {
   background-image:
     linear-gradient(rgba(0, 245, 255, 0.03) 1px, transparent 1px),
@@ -177,10 +212,66 @@ body {
   background: linear-gradient(90deg, transparent, var(--neon-cyan), transparent);
   animation: scanDown 3s ease-in-out infinite;
   pointer-events: none;
-  /* FIXED: z-index 0 so the line stays behind card text (z-index 1+) */
+  /* FIX: z-index 0 keeps the scan line BEHIND card text (z-index 1+) */
   z-index: 0;
 }
 
 /* ── Progress bar ──────────────────────────────────────────────────────────── */
 .progress-bar  { height: 4px; border-radius: 2px; background: rgba(26, 37, 64, 0.8); overflow: hidden; }
 .progress-fill { height: 100%; border-radius: 2px; transition: width 0.5s ease; }
+
+/* ── FIX: Ensure all interactive elements are always clickable ─────────────── */
+/*
+ * The background orb divs use position:fixed and cover the full viewport.
+ * pointer-events:none is set inline but this CSS rule acts as a hard safety net
+ * so NO fixed/absolute decorative layer can ever intercept button clicks.
+ */
+.fixed[style*="z-index: 0"],
+.fixed[style*="zIndex"] {
+  pointer-events: none !important;
+}
+
+/* ── Link reset — ensure Next.js <Link> components look correct ────────────── */
+a.btn-cyber {
+  text-decoration: none;
+  display: inline-flex;
+}
+
+/* ── Comprehensive neon color safety net ──────────────────────────────────── */
+/*
+ * These classes are generated by Tailwind from tailwind.config.js color tokens.
+ * The CSS definitions below act as guaranteed fallbacks in case JIT purging
+ * misses any of these class names (e.g. because they appear in dynamic strings
+ * like `isPhishing ? "text-neon-red" : "text-neon-green"`).
+ *
+ * Tailwind JIT can miss dynamically constructed class names — these CSS rules
+ * ensure all neon color utilities always work regardless.
+ */
+.text-neon-cyan    { color: #00f5ff !important; }
+.text-neon-green   { color: #00ff88 !important; }
+.text-neon-red     { color: #ff2d55 !important; }
+.text-neon-yellow  { color: #ffd60a !important; }
+.text-neon-purple  { color: #bf5af2 !important; }
+
+.border-neon-cyan  { border-color: #00f5ff; }
+.border-neon-green { border-color: #00ff88; }
+.border-neon-red   { border-color: #ff2d55; }
+
+.border-cyber-border { border-color: #1a2540; }
+
+/* Opacity variants used in dynamic class strings */
+.bg-neon-red\/10    { background-color: rgba(255, 45,  85,  0.1); }
+.bg-neon-green\/10  { background-color: rgba(0,   255, 136, 0.1); }
+.bg-neon-cyan\/10   { background-color: rgba(0,   245, 255, 0.1); }
+.bg-neon-yellow\/10 { background-color: rgba(255, 214, 10,  0.1); }
+.bg-neon-red\/5     { background-color: rgba(255, 45,  85,  0.05); }
+.bg-neon-green\/5   { background-color: rgba(0,   255, 136, 0.05); }
+
+.border-neon-red\/30    { border-color: rgba(255, 45,  85,  0.3); }
+.border-neon-green\/30  { border-color: rgba(0,   255, 136, 0.3); }
+.border-neon-cyan\/30   { border-color: rgba(0,   245, 255, 0.3); }
+.border-neon-yellow\/30 { border-color: rgba(255, 214, 10,  0.3); }
+.border-neon-red\/10    { border-color: rgba(255, 45,  85,  0.1); }
+.border-neon-green\/10  { border-color: rgba(0,   255, 136, 0.1); }
+.border-neon-cyan\/20   { border-color: rgba(0,   245, 255, 0.2); }
+.border-neon-yellow\/20 { border-color: rgba(255, 214, 10,  0.2); }

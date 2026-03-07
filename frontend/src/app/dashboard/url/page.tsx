@@ -85,7 +85,7 @@ function ResultCard({ result }: { result: ScanResult }) {
                 isPhishing ? "bg-neon-red/5 border border-neon-red/10" : "bg-neon-green/5 border border-neon-green/10"
               )}>
                 <ChevronRight className={clsx("w-3.5 h-3.5 mt-0.5 shrink-0", isPhishing ? "text-neon-red" : "text-neon-green")} />
-                <span className="text-text-primary text-xs">{reason}</span>
+                <span style={{ color: "#e8eaf0" }} className=" text-xs">{reason}</span>
               </div>
             ))}
           </div>

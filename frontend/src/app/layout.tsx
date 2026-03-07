@@ -1,10 +1,7 @@
 import type { Metadata } from "next";
-import { Inter } from "next/font/google";
 import "./globals.css";
 import { Providers } from "@/components/Providers";
 import { Toaster } from "react-hot-toast";
-
-const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
   title: "PhishGuard — Cybersecurity Detection Platform",
@@ -13,10 +10,16 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    // FIXED: Removed className="dark" — it activated Tailwind's dark: variant
-    // overrides which made text-text-primary and text-text-secondary render as
-    // transparent/invisible on our already-dark background.
-    // The site is always dark via CSS variables; Tailwind dark mode not needed.
+    /*
+     * FIX: Removed className="dark" — it was activating Tailwind's dark: variant
+     * overrides which reset text colors to transparent/unknown values on our
+     * custom color tokens. We control the dark theme entirely via CSS variables,
+     * so Tailwind dark mode must not be triggered.
+     *
+     * FIX: Removed next/font Inter import — it was injecting a className that
+     * overrode font-family on body, preventing 'Space Grotesk' and 'JetBrains Mono'
+     * from loading correctly. Fonts are loaded via Google Fonts <link> in <head>.
+     */
     <html lang="en">
       <head>
         <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -26,7 +29,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           rel="stylesheet"
         />
       </head>
-      <body className={`${inter.className} bg-cyber-dark text-text-primary antialiased`}>
+      <body style={{ background: "#050810", color: "#e8eaf0" }}>
         <Providers>
           {children}
           <Toaster

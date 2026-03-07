@@ -7,7 +7,6 @@ import {
   History, LogOut, BarChart3, Users, Activity,
 } from "lucide-react";
 import { useAuthStore } from "@/lib/store";
-import { clsx } from "clsx";
 
 const navItems = [
   { href: "/dashboard",          icon: BarChart3,     label: "Dashboard"       },
@@ -17,8 +16,6 @@ const navItems = [
   { href: "/dashboard/history",  icon: History,       label: "Scan History"    },
 ];
 
-// FIXED: Admin nav items only shown to admin/analyst roles.
-// /dashboard/admin/logs page is now created so this link actually works.
 const adminItems = [
   { href: "/dashboard/admin",      icon: Users,    label: "User Management" },
   { href: "/dashboard/admin/logs", icon: Activity, label: "Audit Logs"      },
@@ -31,14 +28,13 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const [checking, setChecking] = useState(true);
 
   useEffect(() => {
-    const token = localStorage.getItem("access_token");
+    const token = typeof window !== "undefined" ? localStorage.getItem("access_token") : null;
     if (!token) {
       router.replace("/auth/login");
       return;
     }
     fetchUser().finally(() => {
       setChecking(false);
-      // Read fresh state after fetchUser resolves
       if (!useAuthStore.getState().isAuthenticated) {
         router.replace("/auth/login");
       }
@@ -50,8 +46,11 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     return (
       <div className="min-h-screen grid-bg flex items-center justify-center">
         <div className="flex flex-col items-center gap-3">
-          <div className="w-8 h-8 border-2 border-neon-cyan/30 border-t-neon-cyan rounded-full animate-spin" />
-          <div className="text-neon-cyan font-mono text-sm">Authenticating...</div>
+          <div
+            className="w-8 h-8 border-2 rounded-full animate-spin"
+            style={{ borderColor: "rgba(0,245,255,0.3)", borderTopColor: "var(--neon-cyan)" }}
+          />
+          <div className="font-mono text-sm" style={{ color: "var(--neon-cyan)" }}>Authenticating...</div>
         </div>
       </div>
     );
@@ -72,32 +71,44 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const rc = roleColors[user?.role as keyof typeof roleColors] ?? roleColors.user;
 
   return (
-    <div className="min-h-screen flex bg-cyber-dark">
+    <div className="min-h-screen flex" style={{ background: "#050810" }}>
       {/* Sidebar */}
-      <aside className="w-60 border-r border-cyber-border flex flex-col bg-cyber-card shrink-0">
+      <aside
+        className="w-60 flex flex-col shrink-0"
+        style={{
+          background: "#0c1120",
+          borderRight: "1px solid #1a2540",
+        }}
+      >
         {/* Logo */}
-        <div className="px-5 py-5 border-b border-cyber-border">
+        <div className="px-5 py-5" style={{ borderBottom: "1px solid #1a2540" }}>
           <div className="flex items-center gap-2.5">
-            <div className="w-7 h-7 rounded-lg bg-neon-cyan/10 border border-neon-cyan/30 flex items-center justify-center">
-              <Shield className="w-3.5 h-3.5 text-neon-cyan" />
+            <div
+              className="w-7 h-7 rounded-lg flex items-center justify-center border"
+              style={{ background: "rgba(0,245,255,0.1)", borderColor: "rgba(0,245,255,0.3)" }}
+            >
+              <Shield className="w-3.5 h-3.5" style={{ color: "var(--neon-cyan)" }} />
             </div>
-            <span className="font-display font-bold text-base text-text-primary">
-              Phish<span className="text-neon-cyan">Guard</span>
+            <span className="font-display font-bold text-base" style={{ color: "#e8eaf0" }}>
+              Phish<span style={{ color: "var(--neon-cyan)" }}>Guard</span>
             </span>
           </div>
         </div>
 
         {/* User info */}
         {user && (
-          <div className="px-5 py-4 border-b border-cyber-border">
+          <div className="px-5 py-4" style={{ borderBottom: "1px solid #1a2540" }}>
             <div className="flex items-center gap-2.5">
-              <div className="w-8 h-8 rounded-full bg-neon-cyan/10 border border-neon-cyan/20 flex items-center justify-center">
-                <span className="text-neon-cyan font-mono text-xs font-bold">
+              <div
+                className="w-8 h-8 rounded-full flex items-center justify-center border"
+                style={{ background: "rgba(0,245,255,0.1)", borderColor: "rgba(0,245,255,0.2)" }}
+              >
+                <span className="font-mono text-xs font-bold" style={{ color: "var(--neon-cyan)" }}>
                   {user.username?.[0]?.toUpperCase() ?? "?"}
                 </span>
               </div>
               <div>
-                <div className="text-text-primary text-xs font-medium">{user.username}</div>
+                <div className="text-xs font-medium" style={{ color: "#e8eaf0" }}>{user.username}</div>
                 <div
                   className="text-xs font-mono px-1.5 py-0.5 rounded mt-0.5 inline-block"
                   style={{ background: rc.bg, color: rc.color, border: `1px solid ${rc.border}` }}
@@ -117,12 +128,19 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               <Link
                 key={item.href}
                 href={item.href}
-                className={clsx(
-                  "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-mono transition-all",
+                className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-mono transition-all"
+                style={
                   active
-                    ? "bg-neon-cyan/10 border border-neon-cyan/20 text-neon-cyan"
-                    : "text-text-secondary hover:text-text-primary hover:bg-white/5"
-                )}
+                    ? {
+                        background: "rgba(0,245,255,0.1)",
+                        border: "1px solid rgba(0,245,255,0.2)",
+                        color: "var(--neon-cyan)",
+                      }
+                    : {
+                        color: "#8892b0",
+                        border: "1px solid transparent",
+                      }
+                }
               >
                 <item.icon className="w-4 h-4 shrink-0" />
                 {item.label}
@@ -130,11 +148,13 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             );
           })}
 
-          {/* Admin section — only admin or analyst can see this */}
+          {/* Admin section */}
           {(user?.role === "admin" || user?.role === "analyst") && (
             <>
               <div className="pt-3 pb-1 px-3">
-                <span className="text-text-secondary text-xs font-mono uppercase tracking-wider">Admin</span>
+                <span className="text-xs font-mono uppercase tracking-wider" style={{ color: "#8892b0" }}>
+                  Admin
+                </span>
               </div>
               {adminItems.map((item) => {
                 const active = pathname === item.href;
@@ -142,12 +162,19 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                   <Link
                     key={item.href}
                     href={item.href}
-                    className={clsx(
-                      "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-mono transition-all",
+                    className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-mono transition-all"
+                    style={
                       active
-                        ? "bg-neon-yellow/10 border border-neon-yellow/20 text-neon-yellow"
-                        : "text-text-secondary hover:text-text-primary hover:bg-white/5"
-                    )}
+                        ? {
+                            background: "rgba(255,214,10,0.1)",
+                            border: "1px solid rgba(255,214,10,0.2)",
+                            color: "#ffd60a",
+                          }
+                        : {
+                            color: "#8892b0",
+                            border: "1px solid transparent",
+                          }
+                    }
                   >
                     <item.icon className="w-4 h-4 shrink-0" />
                     {item.label}
@@ -159,10 +186,11 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         </nav>
 
         {/* Sign out */}
-        <div className="p-3 border-t border-cyber-border">
+        <div className="p-3" style={{ borderTop: "1px solid #1a2540" }}>
           <button
             onClick={handleLogout}
-            className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-mono text-text-secondary hover:text-neon-red hover:bg-neon-red/5 transition-all w-full"
+            className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-mono transition-all w-full"
+            style={{ color: "#8892b0", background: "transparent", border: "none", cursor: "pointer" }}
           >
             <LogOut className="w-4 h-4" />
             Sign Out
@@ -171,7 +199,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       </aside>
 
       {/* Main content */}
-      <main className="flex-1 overflow-auto">
+      <main className="flex-1 overflow-auto" style={{ color: "#e8eaf0" }}>
         {children}
       </main>
     </div>
