@@ -40,16 +40,10 @@ _login_limiter = Limiter(key_func=get_remote_address)
 
 @router.post("/register", response_model=TokenResponse, status_code=201)
 def register(payload: UserRegister, request: Request, db: Session = Depends(get_db)):
-    """
-    Register a new user and return tokens for immediate login.
 
-    Security enforcements:
-      - role is ALWAYS forced to UserRole.user regardless of payload.
-      - Terms of Service acceptance is required.
-      - Admin accounts can only be created via seeding / manual DB insertion.
-    """
     if db.query(User).filter(User.email == payload.email).first():
         raise HTTPException(status_code=400, detail="Email already registered")
+
     if db.query(User).filter(User.username == payload.username).first():
         raise HTTPException(status_code=400, detail="Username already taken")
 
@@ -67,16 +61,18 @@ def register(payload: UserRegister, request: Request, db: Session = Depends(get_
         terms_accepted=True,
         last_login=datetime.utcnow(),
     )
+
     db.add(user)
     db.commit()
     db.refresh(user)
 
-    access_token  = create_access_token({"sub": str(user.id), "role": user.role.value})
+    access_token = create_access_token({"sub": str(user.id), "role": user.role.value})
     refresh_token = create_refresh_token({"sub": str(user.id)})
 
     log_action(
-        db, "user.register",
-        user_id=str(user.id),
+        db,
+        "user.register",
+        user_id=user.id,  # FIX HERE
         ip_address=request.client.host,
         user_agent=request.headers.get("user-agent"),
     )
