@@ -108,8 +108,11 @@ app.add_middleware(SecurityHeadersMiddleware)
 # covering all headers required by the Next.js frontend + JWT auth.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.ALLOWED_ORIGINS,           # see config.py
-    allow_origin_regex=r"https://phishguard.*\.vercel\.app",  # covers preview deploys
+    allow_origins=[
+    "http://localhost:3000",
+    "https://phishguard-arpitmeh-glitchs-projects.vercel.app",
+    ],
+    allow_origin_regex=r"https://.*\.vercel\.app",
     allow_credentials=True,   # Required: frontend sends Authorization / cookies
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=[
