@@ -35,18 +35,41 @@ module.exports = {
         mono:    ["'JetBrains Mono'", "monospace"],
         display: ["'Space Grotesk'",  "sans-serif"],
         body:    ["'Inter'",           "sans-serif"],
+        /*
+         * FIX: Added Syne — used by the About page for all display headings
+         * (hero title, section titles, creator name, feature card titles).
+         * Without this entry, Tailwind won't generate the `font-syne` utility
+         * class and the About page falls back to system fonts.
+         */
+        syne:    ["'Syne'",            "sans-serif"],
       },
       boxShadow: {
         "neon-cyan":  "0 0 20px rgba(0, 245, 255, 0.3)",
         "neon-green": "0 0 20px rgba(0, 255, 136, 0.3)",
         "neon-red":   "0 0 20px rgba(255, 45, 85, 0.3)",
         "neon-card":  "0 4px 24px rgba(0, 0, 0, 0.6), 0 0 1px rgba(0, 245, 255, 0.1)",
+        /*
+         * FIX: Added glow shadow variants used by About page feature cards
+         * on hover. Without these, the box-shadow is applied only as an
+         * inline framer-motion style — adding them here means Tailwind can
+         * also generate them as utilities if needed elsewhere.
+         */
+        "glow-cyan":  "0 0 32px rgba(0, 245, 255, 0.25), 0 0 64px rgba(0, 245, 255, 0.1)",
+        "glow-sky":   "0 0 32px rgba(56, 189, 248, 0.25), 0 0 64px rgba(56, 189, 248, 0.1)",
+        "glow-teal":  "0 0 32px rgba(20, 184, 166, 0.25), 0 0 64px rgba(20, 184, 166, 0.1)",
       },
       animation: {
         "pulse-slow": "pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite",
         "scan-line":  "scanLine 2s linear infinite",
         "glow":       "glow 2s ease-in-out infinite alternate",
         "float":      "float 6s ease-in-out infinite",
+        /*
+         * FIX: Added rotate-border animation for the About page creator card
+         * animated gradient border. Matches the CSS @keyframes rotateBorder
+         * defined in globals.css so both the Tailwind utility and the CSS
+         * class work interchangeably.
+         */
+        "rotate-border": "rotateBorder 4s linear infinite",
       },
       keyframes: {
         scanLine: {
@@ -60,6 +83,11 @@ module.exports = {
         float: {
           "0%, 100%": { transform: "translateY(0)" },
           "50%":      { transform: "translateY(-10px)" },
+        },
+        // Matches @keyframes rotateBorder in globals.css
+        rotateBorder: {
+          "0%":   { transform: "rotate(0deg)" },
+          "100%": { transform: "rotate(360deg)" },
         },
       },
       backgroundImage: {

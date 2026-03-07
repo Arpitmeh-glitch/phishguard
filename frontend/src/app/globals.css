@@ -2,6 +2,9 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ── Google Fonts ───────────────────────────────────────────────────────────── */
+@import url('https://fonts.googleapis.com/css2?family=Syne:wght@700;800;900&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
 /* ── Design tokens ─────────────────────────────────────────────────────────── */
 :root {
   --cyber-dark:    #050810;
@@ -275,3 +278,117 @@ a.btn-cyber {
 .border-neon-green\/10  { border-color: rgba(0,   255, 136, 0.1); }
 .border-neon-cyan\/20   { border-color: rgba(0,   245, 255, 0.2); }
 .border-neon-yellow\/20 { border-color: rgba(255, 214, 10,  0.2); }
+
+/* ── About page — animated gradient border ─────────────────────────────────── */
+/*
+ * The About page creator card uses a rotating gradient border achieved via
+ * a ::before pseudo-element. This keyframe drives the hue rotation.
+ * framer-motion handles the JS-driven version; this is the CSS-only fallback.
+ */
+@keyframes rotateBorder {
+  0%   { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+/*
+ * Wrapper that creates the animated gradient border effect.
+ * Usage: wrap your card in <div class="gradient-border-wrap">
+ * The inner card should have background matching --cyber-dark to "cut out"
+ * the border from the rotating gradient underneath.
+ */
+.gradient-border-wrap {
+  position: relative;
+  border-radius: 16px;
+  padding: 1px;
+  overflow: hidden;
+}
+.gradient-border-wrap::before {
+  content: "";
+  position: absolute;
+  inset: -50%;
+  width: 200%;
+  height: 200%;
+  background: conic-gradient(
+    from 0deg,
+    #00f5ff 0%,
+    #0ea5e9 25%,
+    #06b6d4 50%,
+    #00f5ff 75%,
+    #0ea5e9 100%
+  );
+  animation: rotateBorder 4s linear infinite;
+  opacity: 0.5;
+  pointer-events: none;
+  z-index: 0;
+}
+.gradient-border-wrap > * {
+  position: relative;
+  z-index: 1;
+  border-radius: 15px;
+}
+
+/* ── About page — Syne display font utility ────────────────────────────────── */
+/*
+ * Tailwind JIT won't pick up arbitrary font-family values defined only in
+ * inline styles. This utility class ensures the Syne display font is always
+ * available as a class, matching the About page's section headings and titles.
+ */
+.font-syne {
+  font-family: 'Syne', system-ui, sans-serif;
+}
+
+/* ── About page — mono utility ─────────────────────────────────────────────── */
+.font-mono-jetbrains {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+}
+
+/* ── About page — floating particle glow ──────────────────────────────────── */
+/*
+ * Ensures particle divs never block interaction and always render above
+ * the grid-bg layer but below interactive content.
+ */
+.particle {
+  pointer-events: none;
+  position: absolute;
+  border-radius: 9999px;
+  background-color: #00f5ff;
+  opacity: 0.25;
+}
+
+/* ── About page — tech badge float animation ───────────────────────────────── */
+/*
+ * CSS-only fallback for the framer-motion float on tech stack badges.
+ * framer-motion inline styles override this when JS is available.
+ */
+@keyframes floatBadge {
+  0%, 100% { transform: translateY(0px); }
+  50%       { transform: translateY(-5px); }
+}
+.badge-float {
+  animation: floatBadge 3s ease-in-out infinite;
+}
+
+/* ── About page — section reveal fallback ──────────────────────────────────── */
+/*
+ * framer-motion whileInView sets opacity/transform via inline styles.
+ * This fallback prevents content from being invisible if JS is slow or
+ * the IntersectionObserver fires before framer-motion is hydrated.
+ */
+@media (prefers-reduced-motion: reduce) {
+  [data-framer-appear-id],
+  .framer-motion-section {
+    opacity: 1 !important;
+    transform: none !important;
+  }
+}
+
+/* ── About page — amber disclaimer card ───────────────────────────────────── */
+.disclaimer-card {
+  border-radius: 16px;
+  border: 1px solid rgba(180, 83, 9, 0.3);
+  background-color: rgba(120, 53, 15, 0.08);
+  transition: border-color 0.3s ease;
+}
+.disclaimer-card:hover {
+  border-color: rgba(245, 158, 11, 0.35);
+}
