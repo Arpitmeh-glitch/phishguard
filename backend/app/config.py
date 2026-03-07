@@ -35,9 +35,12 @@ class Settings(BaseSettings):
     # Rate limiting
     RATE_LIMIT_PER_MINUTE: int = 30
     
+    # FIX: ADMIN_EMAIL was referenced in auth.py but never defined here,
+    # causing AttributeError → 500 on every admin login attempt.
+    # Default is the seeded demo admin account email.
+    ADMIN_EMAIL: str = "admin@phishguard.io"
+    
     # CORS
-    # Include all known deployment origins. Add new Vercel preview URLs via
-    # the ALLOWED_ORIGINS env var (comma-separated) in Railway settings.
     ALLOWED_ORIGINS: list = [
         "http://localhost:3000",
         "http://localhost:3001",

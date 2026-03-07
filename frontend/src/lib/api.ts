@@ -1,8 +1,23 @@
 import axios from "axios";
 
-const API_BASE =
-  (process.env.NEXT_PUBLIC_API_URL ||
-   "https://phishguard-production-0e6b.up.railway.app") + "/api/v1";
+// FIX: The API base URL must NOT include /api/v1 when using docker-compose
+// because next.config.js rewrites /api/* → backend:8000/api/* already.
+// Previously docker-compose set NEXT_PUBLIC_API_URL=/api/v1 and api.ts
+// appended /api/v1 again → requests hit /api/v1/api/v1/... (404).
+//
+// New logic:
+//   - In docker/nginx (env var = empty or not set): use "" so all calls go
+//     through the Next.js rewrite proxy (relative URLs → /api/v1/...)
+//   - With explicit Railway URL: use it directly, and do NOT re-append /api/v1
+const rawBase = process.env.NEXT_PUBLIC_API_URL ?? "";
+
+// If the env var already ends with /api/v1 (old docker-compose value), strip it
+// so downstream code appending /api/v1 doesn't double up.
+const API_BASE = rawBase.endsWith("/api/v1")
+  ? rawBase  // already correct external URL
+  : rawBase === "" || rawBase === "/api/v1"
+    ? "/api/v1"  // local proxy — use relative so nginx handles it
+    : rawBase + "/api/v1";  // external base URL without suffix
 
 export const api = axios.create({
   baseURL: API_BASE,
@@ -49,7 +64,8 @@ api.interceptors.response.use(
 
 // Auth
 export const authApi = {
-  register: (data: { email: string; username: string; password: string }) =>
+  // FIX: Added terms_accepted field to register payload type
+  register: (data: { email: string; username: string; password: string; terms_accepted: boolean }) =>
     api.post("/auth/register", data),
   login: (data: { email: string; password: string }) =>
     api.post("/auth/login", data),
@@ -66,8 +82,7 @@ export const scanApi = {
     const fd = new FormData();
     fd.append("file", file);
     // Do NOT manually set Content-Type here — axios must auto-set it
-    // with the correct multipart boundary (e.g. multipart/form-data; boundary=----xyz).
-    // Overriding it strips the boundary and causes a 422 on the server.
+    // with the correct multipart boundary.
     return api.post("/scan/file", fd);
   },
 };

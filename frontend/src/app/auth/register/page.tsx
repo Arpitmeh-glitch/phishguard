@@ -2,7 +2,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Shield, AlertCircle, Eye, EyeOff } from "lucide-react";
+import { Shield, AlertCircle, Eye, EyeOff, CheckSquare, Square } from "lucide-react";
 import toast from "react-hot-toast";
 import { useAuthStore } from "@/lib/store";
 
@@ -11,13 +11,36 @@ export default function RegisterPage() {
   const { register, isLoading } = useAuthStore();
   const [form, setForm] = useState({ email: "", username: "", password: "" });
   const [showPassword, setShowPassword] = useState(false);
+  const [termsAccepted, setTermsAccepted] = useState(false);
   const [error, setError] = useState("");
 
   const handleSubmit = async (e: React.FormEvent) => {
+    // FIX: Explicitly prevent default — stops page reload on form submit
     e.preventDefault();
     setError("");
+
+    // FIX: Validate terms accepted client-side with clear error message
+    if (!termsAccepted) {
+      setError("You must accept the Terms of Service to register");
+      return;
+    }
+
+    if (form.password.length < 8) {
+      setError("Password must be at least 8 characters");
+      return;
+    }
+    if (!/[A-Z]/.test(form.password)) {
+      setError("Password must contain at least one uppercase letter");
+      return;
+    }
+    if (!/[0-9]/.test(form.password)) {
+      setError("Password must contain at least one digit");
+      return;
+    }
+
     try {
-      await register(form.email, form.username, form.password);
+      // FIX: Pass termsAccepted to the register call so backend receives it
+      await register(form.email, form.username, form.password, termsAccepted);
       toast.success("Account created. Please sign in.");
       router.push("/auth/login");
     } catch (err: any) {
@@ -99,9 +122,39 @@ export default function RegisterPage() {
                   {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                 </button>
               </div>
+              <div className="mt-1.5 flex gap-3 text-xs font-mono">
+                <span className={form.password.length >= 8 ? "text-neon-green" : "text-text-secondary"}>8+ chars</span>
+                <span className={/[A-Z]/.test(form.password) ? "text-neon-green" : "text-text-secondary"}>Uppercase</span>
+                <span className={/[0-9]/.test(form.password) ? "text-neon-green" : "text-text-secondary"}>Number</span>
+              </div>
             </div>
 
-            <button type="submit" disabled={isLoading} className="btn-cyber w-full py-3 mt-2 text-sm">
+            {/* FIX: Terms of Service checkbox — backend requires terms_accepted=true */}
+            <div>
+              <button
+                type="button"
+                onClick={() => setTermsAccepted(!termsAccepted)}
+                className="flex items-start gap-2.5 text-left w-full group"
+              >
+                <div className="mt-0.5 shrink-0 text-neon-cyan">
+                  {termsAccepted
+                    ? <CheckSquare className="w-4 h-4" />
+                    : <Square className="w-4 h-4 text-text-secondary group-hover:text-neon-cyan transition-colors" />
+                  }
+                </div>
+                <span className="text-xs font-mono text-text-secondary">
+                  I accept the{" "}
+                  <span className="text-neon-cyan">Terms of Service</span>
+                  {" "}and agree to the platform's usage policies
+                </span>
+              </button>
+            </div>
+
+            <button
+              type="submit"
+              disabled={isLoading}
+              className="btn-cyber w-full py-3 mt-2 text-sm"
+            >
               {isLoading ? "Creating account..." : "→  Create Account"}
             </button>
           </form>

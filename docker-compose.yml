@@ -50,6 +50,8 @@ services:
       SECRET_KEY: ${SECRET_KEY:-change_me_in_production_32chars}
       ENCRYPTION_KEY: ${ENCRYPTION_KEY:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      # FIX: ADMIN_EMAIL must be set so the admin gate in auth.py works.
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@phishguard.io}
       DEBUG: "false"
       ALLOWED_ORIGINS: '["http://localhost:3000","https://${DOMAIN:-localhost}"]'
     volumes:
@@ -76,7 +78,16 @@ services:
     container_name: phishguard_frontend
     restart: unless-stopped
     environment:
-      NEXT_PUBLIC_API_URL: /api/v1
+      # FIX: Do NOT set NEXT_PUBLIC_API_URL to "/api/v1" — api.ts appends
+      # "/api/v1" itself, which would produce "/api/v1/api/v1/..." double path.
+      # Leave it empty so api.ts uses the relative "/api/v1" base URL, and
+      # nginx proxies /api/v1/* → backend:8000/api/v1/*.
+      # For external Railway/Vercel deployments, set this to the full backend
+      # base URL WITHOUT the /api/v1 suffix, e.g.:
+      # NEXT_PUBLIC_API_URL: https://phishguard-production-0e6b.up.railway.app
+      NEXT_PUBLIC_API_URL: ""
+      # Internal URL used by Next.js server-side rewrites (not sent to browser)
+      BACKEND_INTERNAL_URL: "http://backend:8000"
     depends_on:
       - backend
     networks:

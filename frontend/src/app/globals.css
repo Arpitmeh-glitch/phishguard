@@ -10,6 +10,9 @@
   --neon-green: #00ff88;
   --neon-red: #ff2d55;
   --neon-yellow: #ffd60a;
+  /* FIX: Explicit text color variables so text is always visible */
+  --text-primary: #e8eaf0;
+  --text-secondary: #8892b0;
 }
 
 * {
@@ -22,8 +25,15 @@ html {
 
 body {
   background: var(--cyber-dark);
+  /* FIX: Explicitly set text color so it's never invisible on dark background */
+  color: var(--text-primary);
   min-height: 100vh;
 }
+
+/* FIX: Tailwind's "dark" class on <html> sets --tw-text-opacity etc.
+   These overrides ensure our custom color names always resolve correctly. */
+.text-text-primary  { color: var(--text-primary)  !important; }
+.text-text-secondary { color: var(--text-secondary) !important; }
 
 /* Scrollbar */
 ::-webkit-scrollbar { width: 6px; height: 6px; }

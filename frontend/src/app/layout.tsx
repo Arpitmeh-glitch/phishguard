@@ -13,7 +13,10 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className="dark">
+    // FIX: Removed className="dark" — it activated Tailwind's dark: variant
+    // overrides which turned text colors transparent/invisible on our dark bg.
+    // The site is always dark-themed via CSS variables; no Tailwind dark mode needed.
+    <html lang="en">
       <head>
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />

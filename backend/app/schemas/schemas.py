@@ -11,6 +11,10 @@ class UserRegister(BaseModel):
     email: EmailStr
     username: str = Field(..., min_length=3, max_length=50)
     password: str = Field(..., min_length=8, max_length=100)
+    # FIX: Added terms_accepted field — backend auth.py requires it but it was
+    # missing from the schema, so all registration attempts returned 422
+    # "Validation error" and the frontend showed no error (just reset).
+    terms_accepted: bool = False
 
     @field_validator("password")
     @classmethod

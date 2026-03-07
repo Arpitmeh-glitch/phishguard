@@ -14,7 +14,8 @@ interface AuthState {
   isLoading: boolean;
   isAuthenticated: boolean;
   login: (email: string, password: string) => Promise<void>;
-  register: (email: string, username: string, password: string) => Promise<void>;
+  // FIX: Added termsAccepted parameter to register signature
+  register: (email: string, username: string, password: string, termsAccepted: boolean) => Promise<void>;
   logout: () => void;
   fetchUser: () => Promise<void>;
 }
@@ -46,10 +47,11 @@ export const useAuthStore = create<AuthState>((set) => ({
     }
   },
 
-  register: async (email, username, password) => {
+  // FIX: Accept and forward termsAccepted to the API call
+  register: async (email, username, password, termsAccepted) => {
     set({ isLoading: true });
     try {
-      await authApi.register({ email, username, password });
+      await authApi.register({ email, username, password, terms_accepted: termsAccepted });
     } finally {
       set({ isLoading: false });
     }
@@ -70,6 +72,7 @@ export const useAuthStore = create<AuthState>((set) => ({
     } catch {
       localStorage.removeItem("access_token");
       localStorage.removeItem("refresh_token");
+      set({ user: null, isAuthenticated: false });
     }
   },
 }));

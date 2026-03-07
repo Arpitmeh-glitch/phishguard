@@ -5,6 +5,11 @@ module.exports = {
     "./src/components/**/*.{js,ts,jsx,tsx,mdx}",
     "./src/app/**/*.{js,ts,jsx,tsx,mdx}",
   ],
+  // FIX: Remove darkMode: 'class' — the layout adds className="dark" to <html>
+  // which caused Tailwind's dark-mode variants to override text colors to
+  // match a dark-mode palette that wasn't configured, making text invisible.
+  // Since the entire site is always dark-themed, we don't need dark: variants.
+  darkMode: false,
   theme: {
     extend: {
       colors: {
@@ -16,6 +21,8 @@ module.exports = {
         "neon-red": "#ff2d55",
         "neon-yellow": "#ffd60a",
         "neon-purple": "#bf5af2",
+        // FIX: Map text-primary/secondary to actual hex so Tailwind can
+        // generate bg-*, border-*, text-* utilities for them reliably
         "text-primary": "#e8eaf0",
         "text-secondary": "#8892b0",
       },
