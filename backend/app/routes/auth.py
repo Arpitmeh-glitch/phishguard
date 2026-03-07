@@ -54,13 +54,12 @@ def register(payload: UserRegister, request: Request, db: Session = Depends(get_
         )
 
     user = User(
-        email=payload.email,
-        username=payload.username,
-        hashed_password=hash_password(payload.password),
-        role=UserRole.user,
-        terms_accepted=True,
-        last_login=datetime.utcnow(),
-    )
+    email=payload.email,
+    username=payload.username,
+    hashed_password=hash_password(payload.password),
+    role=UserRole.user,
+    last_login=datetime.utcnow(),
+)
 
     db.add(user)
     db.commit()
