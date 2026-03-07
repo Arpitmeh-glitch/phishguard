@@ -2,20 +2,22 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ── Design tokens ─────────────────────────────────────────────────────────── */
 :root {
-  --cyber-dark: #050810;
-  --cyber-card: #0c1120;
-  --cyber-border: #1a2540;
-  --neon-cyan: #00f5ff;
-  --neon-green: #00ff88;
-  --neon-red: #ff2d55;
-  --neon-yellow: #ffd60a;
-  /* FIX: Explicit text color variables so text is always visible */
-  --text-primary: #e8eaf0;
-  --text-secondary: #8892b0;
+  --cyber-dark:    #050810;
+  --cyber-card:    #0c1120;
+  --cyber-border:  #1a2540;
+  --neon-cyan:     #00f5ff;
+  --neon-green:    #00ff88;
+  --neon-red:      #ff2d55;
+  --neon-yellow:   #ffd60a;
+  --neon-purple:   #bf5af2;
+  --text-primary:  #e8eaf0;
+  --text-secondary:#8892b0;
 }
 
-* {
+/* ── Global resets ─────────────────────────────────────────────────────────── */
+*, *::before, *::after {
   box-sizing: border-box;
 }
 
@@ -23,25 +25,34 @@ html {
   scroll-behavior: smooth;
 }
 
+/* FIXED: body always gets an explicit background + foreground color.
+   Without `color`, text on the dark bg rendered as the browser default black
+   which Tailwind's base-layer reset then mapped to transparent in some builds. */
 body {
   background: var(--cyber-dark);
-  /* FIX: Explicitly set text color so it's never invisible on dark background */
   color: var(--text-primary);
   min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
-/* FIX: Tailwind's "dark" class on <html> sets --tw-text-opacity etc.
-   These overrides ensure our custom color names always resolve correctly. */
-.text-text-primary  { color: var(--text-primary)  !important; }
-.text-text-secondary { color: var(--text-secondary) !important; }
+/* FIXED: Explicit utility overrides for our custom color tokens.
+   Tailwind generates `text-text-primary` from the config key "text-primary",
+   but if JIT misses a class or the dark-mode layer overrides it, this acts
+   as a guaranteed CSS-level fallback. */
+.text-text-primary   { color: var(--text-primary)   !important; }
+.text-text-secondary { color: var(--text-secondary)  !important; }
 
-/* Scrollbar */
-::-webkit-scrollbar { width: 6px; height: 6px; }
-::-webkit-scrollbar-track { background: var(--cyber-dark); }
-::-webkit-scrollbar-thumb { background: var(--cyber-border); border-radius: 3px; }
-::-webkit-scrollbar-thumb:hover { background: rgba(0, 245, 255, 0.3); }
+/* ── Scrollbar ─────────────────────────────────────────────────────────────── */
+::-webkit-scrollbar              { width: 6px; height: 6px; }
+::-webkit-scrollbar-track        { background: var(--cyber-dark); }
+::-webkit-scrollbar-thumb        { background: var(--cyber-border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover  { background: rgba(0, 245, 255, 0.3); }
 
-/* Cyber card */
+/* ── Cyber card ────────────────────────────────────────────────────────────── */
+/* FIXED: z-index layering — card is z-auto; its ::before pseudo-element
+   (the subtle gradient sheen) uses pointer-events:none so it never intercepts
+   clicks or visually obscures child text. */
 .cyber-card {
   background: var(--cyber-card);
   border: 1px solid var(--cyber-border);
@@ -49,32 +60,27 @@ body {
   position: relative;
   overflow: hidden;
 }
-
 .cyber-card::before {
   content: "";
   position: absolute;
   inset: 0;
   background: linear-gradient(135deg, rgba(0, 245, 255, 0.03) 0%, transparent 50%);
   pointer-events: none;
+  z-index: 0;
+}
+/* Ensure all direct children of cyber-card sit above the ::before sheen */
+.cyber-card > * {
+  position: relative;
+  z-index: 1;
 }
 
-/* Neon text */
-.neon-text-cyan {
-  color: var(--neon-cyan);
-  text-shadow: 0 0 20px rgba(0, 245, 255, 0.6);
-}
+/* ── Neon text ─────────────────────────────────────────────────────────────── */
+.neon-text-cyan   { color: var(--neon-cyan);   text-shadow: 0 0 20px rgba(0, 245, 255, 0.6); }
+.neon-text-green  { color: var(--neon-green);  text-shadow: 0 0 20px rgba(0, 255, 136, 0.6); }
+.neon-text-red    { color: var(--neon-red);    text-shadow: 0 0 20px rgba(255, 45, 85, 0.6);  }
+.neon-text-yellow { color: var(--neon-yellow); text-shadow: 0 0 20px rgba(255, 214, 10, 0.6); }
 
-.neon-text-green {
-  color: var(--neon-green);
-  text-shadow: 0 0 20px rgba(0, 255, 136, 0.6);
-}
-
-.neon-text-red {
-  color: var(--neon-red);
-  text-shadow: 0 0 20px rgba(255, 45, 85, 0.6);
-}
-
-/* Scan input */
+/* ── Scan input ────────────────────────────────────────────────────────────── */
 .scan-input {
   background: rgba(26, 37, 64, 0.4);
   border: 1px solid var(--cyber-border);
@@ -87,18 +93,17 @@ body {
   outline: none;
   font-size: 14px;
 }
-
 .scan-input:focus {
   border-color: var(--neon-cyan);
   box-shadow: 0 0 20px rgba(0, 245, 255, 0.15), inset 0 0 20px rgba(0, 245, 255, 0.03);
 }
+.scan-input::placeholder { color: rgba(136, 146, 176, 0.5); }
 
-.scan-input::placeholder {
-  color: rgba(136, 146, 176, 0.5);
-}
-
-/* Cyber button */
+/* ── Cyber button ──────────────────────────────────────────────────────────── */
 .btn-cyber {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   background: linear-gradient(135deg, rgba(0, 245, 255, 0.15), rgba(0, 245, 255, 0.05));
   border: 1px solid rgba(0, 245, 255, 0.4);
   color: var(--neon-cyan);
@@ -109,79 +114,73 @@ body {
   border-radius: 8px;
   padding: 10px 24px;
   letter-spacing: 0.05em;
+  text-decoration: none;
 }
-
 .btn-cyber:hover {
   background: linear-gradient(135deg, rgba(0, 245, 255, 0.25), rgba(0, 245, 255, 0.1));
   border-color: var(--neon-cyan);
   box-shadow: 0 0 20px rgba(0, 245, 255, 0.3);
   transform: translateY(-1px);
 }
-
 .btn-cyber:disabled {
   opacity: 0.4;
   cursor: not-allowed;
   transform: none;
 }
 
-/* Status badge */
+/* ── Status badges ─────────────────────────────────────────────────────────── */
 .badge-safe {
   background: rgba(0, 255, 136, 0.1);
   border: 1px solid rgba(0, 255, 136, 0.3);
   color: var(--neon-green);
   font-family: 'JetBrains Mono', monospace;
+  padding: 2px 8px;
+  border-radius: 4px;
 }
-
 .badge-threat {
   background: rgba(255, 45, 85, 0.1);
   border: 1px solid rgba(255, 45, 85, 0.3);
   color: var(--neon-red);
   font-family: 'JetBrains Mono', monospace;
+  padding: 2px 8px;
+  border-radius: 4px;
 }
-
 .badge-suspicious {
   background: rgba(255, 214, 10, 0.1);
   border: 1px solid rgba(255, 214, 10, 0.3);
   color: var(--neon-yellow);
   font-family: 'JetBrains Mono', monospace;
+  padding: 2px 8px;
+  border-radius: 4px;
 }
 
-/* Grid background */
+/* ── Grid background ───────────────────────────────────────────────────────── */
+/* FIXED: grid-bg uses z-0 implicitly; content layered above with relative z-10 */
 .grid-bg {
-  background-image: 
+  background-image:
     linear-gradient(rgba(0, 245, 255, 0.03) 1px, transparent 1px),
     linear-gradient(90deg, rgba(0, 245, 255, 0.03) 1px, transparent 1px);
   background-size: 40px 40px;
 }
 
-/* Animated scanner line */
+/* ── Scanner animation ─────────────────────────────────────────────────────── */
 @keyframes scanDown {
-  0% { top: -2px; opacity: 0; }
-  5% { opacity: 1; }
-  95% { opacity: 1; }
+  0%   { top: -2px; opacity: 0; }
+  5%   { opacity: 1; }
+  95%  { opacity: 1; }
   100% { top: 100%; opacity: 0; }
 }
-
 .scanner-line {
   position: absolute;
-  left: 0;
-  right: 0;
+  left: 0; right: 0;
   height: 2px;
   background: linear-gradient(90deg, transparent, var(--neon-cyan), transparent);
   animation: scanDown 3s ease-in-out infinite;
   pointer-events: none;
+  /* FIXED: z-index 0 so the line stays behind card text (z-index 1+) */
+  z-index: 0;
 }
 
-/* Progress bar */
-.progress-bar {
-  height: 4px;
-  border-radius: 2px;
-  background: rgba(26, 37, 64, 0.8);
-  overflow: hidden;
-}
-
-.progress-fill {
-  height: 100%;
-  border-radius: 2px;
-  transition: width 0.5s ease;
-}
+/* ── Progress bar ──────────────────────────────────────────────────────────── */
+.progress-bar  { height: 4px; border-radius: 2px; background: rgba(26, 37, 64, 0.8); overflow: hidden; }
+.progress-fill { height: 100%; border-radius: 2px; transition: width 0.5s ease; }

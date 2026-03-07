@@ -2,26 +2,31 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { Shield, Globe, MessageSquare, FileSearch, History, LogOut, BarChart3, Users, Activity } from "lucide-react";
+import {
+  Shield, Globe, MessageSquare, FileSearch,
+  History, LogOut, BarChart3, Users, Activity,
+} from "lucide-react";
 import { useAuthStore } from "@/lib/store";
 import { clsx } from "clsx";
 
 const navItems = [
-  { href: "/dashboard", icon: BarChart3, label: "Dashboard" },
-  { href: "/dashboard/url", icon: Globe, label: "URL Scanner" },
-  { href: "/dashboard/message", icon: MessageSquare, label: "Message Scanner" },
-  { href: "/dashboard/file", icon: FileSearch, label: "File Scanner" },
-  { href: "/dashboard/history", icon: History, label: "Scan History" },
+  { href: "/dashboard",          icon: BarChart3,     label: "Dashboard"       },
+  { href: "/dashboard/url",      icon: Globe,         label: "URL Scanner"     },
+  { href: "/dashboard/message",  icon: MessageSquare, label: "Message Scanner" },
+  { href: "/dashboard/file",     icon: FileSearch,    label: "File Scanner"    },
+  { href: "/dashboard/history",  icon: History,       label: "Scan History"    },
 ];
 
+// FIXED: Admin nav items only shown to admin/analyst roles.
+// /dashboard/admin/logs page is now created so this link actually works.
 const adminItems = [
-  { href: "/dashboard/admin", icon: Users, label: "User Management" },
-  { href: "/dashboard/admin/logs", icon: Activity, label: "Audit Logs" },
+  { href: "/dashboard/admin",      icon: Users,    label: "User Management" },
+  { href: "/dashboard/admin/logs", icon: Activity, label: "Audit Logs"      },
 ];
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const { user, isAuthenticated, logout, fetchUser } = useAuthStore();
-  const router = useRouter();
+  const router   = useRouter();
   const pathname = usePathname();
   const [checking, setChecking] = useState(true);
 
@@ -33,10 +38,12 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     }
     fetchUser().finally(() => {
       setChecking(false);
+      // Read fresh state after fetchUser resolves
       if (!useAuthStore.getState().isAuthenticated) {
         router.replace("/auth/login");
       }
     });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   if (checking) {
@@ -57,6 +64,13 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     router.push("/auth/login");
   };
 
+  const roleColors = {
+    admin:   { bg: "rgba(255,214,10,0.1)",  color: "#ffd60a",  border: "rgba(255,214,10,0.3)"  },
+    analyst: { bg: "rgba(191,90,242,0.1)",  color: "#bf5af2",  border: "rgba(191,90,242,0.3)"  },
+    user:    { bg: "rgba(0,245,255,0.1)",   color: "#00f5ff",  border: "rgba(0,245,255,0.3)"   },
+  };
+  const rc = roleColors[user?.role as keyof typeof roleColors] ?? roleColors.user;
+
   return (
     <div className="min-h-screen flex bg-cyber-dark">
       {/* Sidebar */}
@@ -74,29 +88,29 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         </div>
 
         {/* User info */}
-        <div className="px-5 py-4 border-b border-cyber-border">
-          <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-full bg-neon-cyan/10 border border-neon-cyan/20 flex items-center justify-center">
-              <span className="text-neon-cyan font-mono text-xs font-bold">
-                {user?.username?.[0]?.toUpperCase() || "?"}
-              </span>
-            </div>
-            <div>
-              <div className="text-text-primary text-xs font-medium">{user?.username}</div>
-              <div className="text-xs font-mono px-1.5 py-0.5 rounded mt-0.5 inline-block"
-                style={{
-                  background: user?.role === "admin" ? "rgba(255,214,10,0.1)" : user?.role === "analyst" ? "rgba(191,90,242,0.1)" : "rgba(0,245,255,0.1)",
-                  color: user?.role === "admin" ? "#ffd60a" : user?.role === "analyst" ? "#bf5af2" : "#00f5ff",
-                  border: `1px solid ${user?.role === "admin" ? "rgba(255,214,10,0.3)" : user?.role === "analyst" ? "rgba(191,90,242,0.3)" : "rgba(0,245,255,0.3)"}`,
-                }}>
-                {user?.role?.toUpperCase()}
+        {user && (
+          <div className="px-5 py-4 border-b border-cyber-border">
+            <div className="flex items-center gap-2.5">
+              <div className="w-8 h-8 rounded-full bg-neon-cyan/10 border border-neon-cyan/20 flex items-center justify-center">
+                <span className="text-neon-cyan font-mono text-xs font-bold">
+                  {user.username?.[0]?.toUpperCase() ?? "?"}
+                </span>
+              </div>
+              <div>
+                <div className="text-text-primary text-xs font-medium">{user.username}</div>
+                <div
+                  className="text-xs font-mono px-1.5 py-0.5 rounded mt-0.5 inline-block"
+                  style={{ background: rc.bg, color: rc.color, border: `1px solid ${rc.border}` }}
+                >
+                  {user.role?.toUpperCase()}
+                </div>
               </div>
             </div>
           </div>
-        </div>
+        )}
 
         {/* Nav */}
-        <nav className="flex-1 p-3 space-y-1">
+        <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
           {navItems.map((item) => {
             const active = pathname === item.href;
             return (
@@ -116,6 +130,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             );
           })}
 
+          {/* Admin section — only admin or analyst can see this */}
           {(user?.role === "admin" || user?.role === "analyst") && (
             <>
               <div className="pt-3 pb-1 px-3">
@@ -143,7 +158,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           )}
         </nav>
 
-        {/* Bottom */}
+        {/* Sign out */}
         <div className="p-3 border-t border-cyber-border">
           <button
             onClick={handleLogout}

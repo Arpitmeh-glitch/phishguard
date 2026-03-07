@@ -2,27 +2,32 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Shield, Eye, EyeOff, AlertCircle, ChevronRight } from "lucide-react";
+import { Shield, Eye, EyeOff, AlertCircle } from "lucide-react";
 import toast from "react-hot-toast";
 import { useAuthStore } from "@/lib/store";
 
 const DEMO_ACCOUNTS = [
-  { label: "Admin", email: "admin@phishguard.io", password: "Admin123!", role: "admin", color: "#ffd60a" },
+  { label: "Admin",   email: "admin@phishguard.io",   password: "Admin123!", role: "admin",   color: "#ffd60a" },
   { label: "Analyst", email: "analyst@phishguard.io", password: "Analyst1!", role: "analyst", color: "#bf5af2" },
-  { label: "User", email: "user@phishguard.io", password: "User1234!", role: "user", color: "#00f5ff" },
+  { label: "User",    email: "user@phishguard.io",    password: "User1234!", role: "user",    color: "#00f5ff" },
 ];
 
 export default function LoginPage() {
   const router = useRouter();
   const { login, isLoading } = useAuthStore();
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
+  const [email, setEmail]             = useState("");
+  const [password, setPassword]       = useState("");
   const [showPassword, setShowPassword] = useState(false);
-  const [error, setError] = useState("");
+  const [error, setError]             = useState("");
 
+  // FIXED: e.preventDefault() is called first to stop any page refresh.
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
+    if (!email || !password) {
+      setError("Please enter your email and password");
+      return;
+    }
     try {
       await login(email, password);
       toast.success("Access granted");
@@ -31,28 +36,36 @@ export default function LoginPage() {
       const detail = err?.response?.data?.detail;
       const msg = typeof detail === "string" ? detail : "Authentication failed";
       setError(msg);
+      toast.error(msg);
     }
   };
 
   const loginAsDemo = async (demo: typeof DEMO_ACCOUNTS[0]) => {
     setError("");
-    setEmail(demo.email);
-    setPassword(demo.password);
     try {
       await login(demo.email, demo.password);
       toast.success(`Signed in as ${demo.label}`);
       router.push("/dashboard");
     } catch (err: any) {
       const detail = err?.response?.data?.detail;
-      setError(typeof detail === "string" ? detail : "Demo login failed — make sure the server is running");
+      const msg = typeof detail === "string" ? detail : "Demo login failed — make sure the server is running";
+      setError(msg);
+      toast.error(msg);
     }
   };
 
   return (
     <div className="min-h-screen grid-bg flex items-center justify-center px-4 py-8">
-      <div className="fixed inset-0 pointer-events-none">
-        <div className="absolute top-1/4 left-1/4 w-64 h-64 rounded-full opacity-8"
-          style={{ background: "radial-gradient(circle, #00f5ff, transparent)", filter: "blur(80px)" }} />
+      {/* Background orb — FIXED: inline opacity instead of invalid opacity-8 class */}
+      <div className="fixed inset-0 pointer-events-none" style={{ zIndex: 0 }}>
+        <div
+          className="absolute top-1/4 left-1/4 w-64 h-64 rounded-full"
+          style={{
+            background: "radial-gradient(circle, #00f5ff, transparent)",
+            filter: "blur(80px)",
+            opacity: 0.08,
+          }}
+        />
       </div>
 
       <div className="w-full max-w-md relative z-10">
@@ -79,20 +92,22 @@ export default function LoginPage() {
                 key={demo.label}
                 onClick={() => loginAsDemo(demo)}
                 disabled={isLoading}
-                className="flex flex-col items-center gap-1.5 p-3 rounded-lg border transition-all hover:scale-[1.02] disabled:opacity-50"
+                className="flex flex-col items-center gap-1.5 p-3 rounded-lg border transition-all hover:scale-[1.02] disabled:opacity-50 cursor-pointer"
                 style={{
                   background: `${demo.color}08`,
                   borderColor: `${demo.color}30`,
                 }}
               >
-                <div className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-mono font-bold"
-                  style={{ background: `${demo.color}15`, color: demo.color }}>
+                <div
+                  className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-mono font-bold"
+                  style={{ background: `${demo.color}15`, color: demo.color }}
+                >
                   {demo.label[0]}
                 </div>
                 <div className="text-xs font-mono font-medium" style={{ color: demo.color }}>
                   {demo.label}
                 </div>
-                <div className="text-text-secondary text-[10px] font-mono opacity-60">
+                <div className="text-text-secondary text-[10px] font-mono" style={{ opacity: 0.6 }}>
                   {demo.role}
                 </div>
               </button>
@@ -104,7 +119,7 @@ export default function LoginPage() {
                 <div key={d.email} className="flex gap-2">
                   <span style={{ color: d.color }}>{d.label}:</span>
                   <span>{d.email}</span>
-                  <span className="opacity-50">/</span>
+                  <span style={{ opacity: 0.5 }}>/</span>
                   <span>{d.password}</span>
                 </div>
               ))}
@@ -124,7 +139,8 @@ export default function LoginPage() {
             </div>
           )}
 
-          <form onSubmit={handleSubmit} className="space-y-4">
+          {/* FIXED: onSubmit with e.preventDefault() prevents page refresh */}
+          <form onSubmit={handleSubmit} className="space-y-4" noValidate>
             <div>
               <label className="block text-text-secondary text-xs font-mono uppercase tracking-wider mb-2">
                 Email Address
@@ -135,6 +151,7 @@ export default function LoginPage() {
                 placeholder="analyst@company.com"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
+                autoComplete="email"
                 required
               />
             </div>
@@ -150,12 +167,14 @@ export default function LoginPage() {
                   placeholder="••••••••"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
+                  autoComplete="current-password"
                   required
                 />
                 <button
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
                   className="absolute right-3 top-1/2 -translate-y-1/2 text-text-secondary hover:text-neon-cyan transition-colors"
+                  tabIndex={-1}
                 >
                   {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                 </button>
@@ -179,7 +198,7 @@ export default function LoginPage() {
           </div>
         </div>
 
-        <p className="text-center text-text-secondary text-xs font-mono mt-4 opacity-50">
+        <p className="text-center text-text-secondary text-xs font-mono mt-4" style={{ opacity: 0.5 }}>
           Protected by JWT · AES-256 · bcrypt
         </p>
       </div>

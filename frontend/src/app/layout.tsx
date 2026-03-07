@@ -13,9 +13,10 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    // FIX: Removed className="dark" — it activated Tailwind's dark: variant
-    // overrides which turned text colors transparent/invisible on our dark bg.
-    // The site is always dark-themed via CSS variables; no Tailwind dark mode needed.
+    // FIXED: Removed className="dark" — it activated Tailwind's dark: variant
+    // overrides which made text-text-primary and text-text-secondary render as
+    // transparent/invisible on our already-dark background.
+    // The site is always dark via CSS variables; Tailwind dark mode not needed.
     <html lang="en">
       <head>
         <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -39,7 +40,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                 fontSize: "13px",
               },
               success: { iconTheme: { primary: "#00ff88", secondary: "#0c1120" } },
-              error: { iconTheme: { primary: "#ff2d55", secondary: "#0c1120" } },
+              error:   { iconTheme: { primary: "#ff2d55", secondary: "#0c1120" } },
             }}
           />
         </Providers>
