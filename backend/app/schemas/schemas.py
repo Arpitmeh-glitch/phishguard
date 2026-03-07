@@ -14,7 +14,7 @@ class UserRegister(BaseModel):
     # FIX: Added terms_accepted field — backend auth.py requires it but it was
     # missing from the schema, so all registration attempts returned 422
     # "Validation error" and the frontend showed no error (just reset).
-    terms_accepted: bool = False
+    terms_accepted: bool 
 
     @field_validator("password")
     @classmethod
@@ -53,8 +53,7 @@ class UserOut(BaseModel):
     created_at: datetime
     last_login: Optional[datetime]
 
-    class Config:
-        from_attributes = True
+    model_config = {"from_attributes": True}
 
 
 class UserUpdate(BaseModel):
