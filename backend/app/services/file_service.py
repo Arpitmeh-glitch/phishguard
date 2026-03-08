@@ -30,7 +30,7 @@ from app.config import settings
 from app.models.models import FileUpload, Scan, ScanType, ScanLabel
 from app.utils.encryption import encrypt_file, decrypt_file
 from app.utils.file_validator import validate_file_content, ALLOWED_MIME_TYPES
-from app.services import url_service, message_service
+from app.services import url_service, message_service, ai_service
 
 logger = logging.getLogger(__name__)
 
@@ -299,18 +299,41 @@ def process_file_scan(file_id: str, user_id: str, db: Session) -> None:
 
         threats = 0
 
-        # Log file-level findings as a meta-scan
+        # ── AI-assisted file threat analysis (Gemini) ─────────────────────
+        # Build a compact context string from file findings + sampled text and
+        # call Gemini for a deep explanation of the threat.
+        ai_file_result = None
+        try:
+            if findings or risk_level in ("suspicious", "dangerous"):
+                context_parts = [f"Filename: {file_record.original_filename}"]
+                if findings:
+                    context_parts.append("Findings:\n" + "\n".join(f"- {f}" for f in findings))
+                if messages:
+                    sample = " ".join(messages[:5])[:1500]
+                    context_parts.append(f"Extracted text sample:\n{sample}")
+                ai_context = "\n\n".join(context_parts)
+                ai_file_result = ai_service.explain_threat_sync(ai_context)
+        except Exception as ai_exc:
+            logger.warning("Gemini file analysis skipped: %s", ai_exc)
+
+        # Log file-level findings as a meta-scan (includes AI result when available)
         if findings:
             label = ScanLabel.phishing if risk_level == "dangerous" else ScanLabel.suspicious
             threats += 1
+            combined_findings = list(findings)
+            if ai_file_result:
+                combined_findings.append(
+                    f"[AI] {ai_file_result.get('summary', '')} "
+                    f"(threat_level={ai_file_result.get('threat_level', 'unknown')})"
+                )
             meta_scan = Scan(
                 user_id=user_uuid,
                 scan_type=ScanType.url,  # use as general scan type
                 input_data=f"[FILE ANALYSIS] {file_record.original_filename}",
                 label=label,
                 confidence=0.9 if risk_level == "dangerous" else 0.6,
-                reasons=json.dumps(findings),
-                detection_mode="file_deep_analysis",
+                reasons=json.dumps(combined_findings),
+                detection_mode="file_deep_analysis+ai" if ai_file_result else "file_deep_analysis",
             )
             db.add(meta_scan)
 

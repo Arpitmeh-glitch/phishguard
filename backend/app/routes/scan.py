@@ -76,7 +76,7 @@ async def scan_url(
     # [C4] Validate scheme before any processing
     safe_url = validate_url_scheme(payload.url)
 
-    result = url_service.scan_url(safe_url)
+    result = await url_service.scan_url_async(safe_url)
 
     label_map = {"PHISHING": ScanLabel.phishing, "SAFE": ScanLabel.safe}
     scan = Scan(
@@ -104,8 +104,12 @@ async def scan_url(
         scan_id=scan.id,
         label=result["label"],
         confidence=result["confidence"],
+        risk_score=result.get("risk_score", 0),
         reasons=result.get("reasons", []),
         detection_mode=result.get("detection_mode", "unknown"),
+        ai_analysis=result.get("ai_analysis"),
+        threat_explanation=result.get("threat_explanation"),
+        vt_result=result.get("vt_result"),
         created_at=scan.created_at,
     )
 
@@ -123,7 +127,7 @@ async def scan_message(
     current_user: User = Depends(_inject_user_for_rate_limit),
 ):
     """Scan a text message for fraud patterns. Rate-limited to 20/min per user."""
-    result = message_service.scan_message(payload.message.strip())
+    result = await message_service.scan_message_async(payload.message.strip())
 
     fl = result.get("final_label", "SAFE")
     label_map = {
@@ -162,9 +166,11 @@ async def scan_message(
         final_score=result.get("final_score", 0.0),
         rule_score=result.get("rule_score", 0.0),
         confidence_level=result.get("confidence_level", "low"),
+        risk_score=result.get("risk_score", 0),
         reasons=result.get("reasons", []),
         language=result.get("language", "unknown"),
         api_used=not result.get("api_skipped", True),
+        ai_analysis=result.get("ai_analysis"),
         created_at=scan.created_at,
     )
 

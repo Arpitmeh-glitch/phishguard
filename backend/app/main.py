@@ -1,32 +1,17 @@
 """
-PhishGuard — Production Cybersecurity API
-==========================================
-FastAPI application entry point.
+PhishGuard — Production Cybersecurity API (SOC Edition)
+========================================================
+Added in this version:
+  - app/services/network_monitor.py  — Real OS connection monitoring
+  - app/services/threat_engine.py    — Enhanced 12-rule detection engine
+  - app/services/threat_feed.py      — Live threat intelligence feeds
+  - app/models/incidents.py          — Security incident model
+  - app/routes/threat.py             — Extended SOC endpoints (incidents, network scan, feeds)
 
-Security hardening applied in this version:
-  - SecurityHeadersMiddleware  : CSP, X-Frame-Options, HSTS, Referrer-Policy, etc.
-  - Explicit CORS allowed headers (no wildcard allow_headers).
-  - Slowapi global IP-based rate limiter + per-user scan limiter (in scan.py).
-  - 422 validation error handler normalised to generic message (no field leakage).
-
-CORS FIX NOTES (v1.0.1)
-------------------------
-Root cause: FastAPI/Starlette processes middleware in LIFO order (last-added = outermost).
-Previously, SecurityHeadersMiddleware was added BEFORE CORSMiddleware, making it
-the outermost layer. That meant SecurityHeadersMiddleware's call_next() received and
-forwarded requests to CORSMiddleware — but when CORSMiddleware short-circuits an
-OPTIONS preflight it returns a Response immediately. Because SecurityHeadersMiddleware
-sat outside it, it could intercept that early return before CORS headers were fully
-committed, causing the browser to see a response missing Access-Control-Allow-Origin.
-
-Fix: Register CORSMiddleware LAST so it becomes the outermost middleware layer,
-handling every request first and returning clean preflight responses before any
-other middleware can interfere.
-
-Middleware execution order after fix (outermost → innermost):
-  1. CORSMiddleware            ← handles OPTIONS preflight, sets Access-Control-* headers
-  2. SecurityHeadersMiddleware ← adds security headers to all other responses
-  3. TrustedHostMiddleware     ← host validation
+Middleware order (outermost → innermost):
+  1. CORSMiddleware
+  2. SecurityHeadersMiddleware
+  3. TrustedHostMiddleware
   4. Application routes
 """
 import logging
@@ -53,12 +38,19 @@ logging.basicConfig(
     format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
 )
 logger = logging.getLogger(__name__)
-#hi this is added by kamal
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Startup and shutdown lifecycle."""
-    logger.info("🚀 PhishGuard API starting…")
+    logger.info("🚀 PhishGuard SOC API starting…")
+
+    # Import all models so SQLAlchemy registers them before create_all
+    from app.models import models  # noqa: F401
+    try:
+        from app.models import incidents  # noqa: F401
+        logger.info("✅ Incident model loaded")
+    except Exception as e:
+        logger.warning(f"Could not load incident model: {e}")
 
     Base.metadata.create_all(bind=engine)
     logger.info("✅ Database tables ensured")
@@ -70,17 +62,31 @@ async def lifespan(app: FastAPI):
         db.close()
 
     url_service.initialize()
+
+    # Start threat feed background loading.
+    # ensure_loaded() is idempotent: the _bootstrap_started flag inside
+    # threat_feed.py guarantees exactly one background thread per process,
+    # even when uvicorn --reload triggers this lifespan multiple times.
+    try:
+        from app.services.threat_feed import ensure_loaded, FEED_REFRESH_INTERVAL
+        ensure_loaded()
+        logger.info(
+            "✅ Threat intelligence feeds loading in background "            "(refresh interval: %ds)", FEED_REFRESH_INTERVAL,
+        )
+    except Exception as e:
+        logger.warning("Threat feed init failed (non-fatal): %s", e)
+
     yield
-    logger.info("👋 PhishGuard API shutting down")
+    logger.info("👋 PhishGuard SOC API shutting down")
 
 
 # ── Rate limiter ──────────────────────────────────────────────────────────────
 limiter = Limiter(key_func=get_remote_address)
 
 app = FastAPI(
-    title="PhishGuard API",
+    title="PhishGuard SOC API",
     version=settings.APP_VERSION,
-    description="Production-grade phishing & fraud detection platform",
+    description="Production-grade phishing detection + SOC monitoring platform",
     docs_url="/api/docs",
     redoc_url="/api/redoc",
     lifespan=lifespan,
@@ -89,23 +95,9 @@ app = FastAPI(
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
-# ── Middleware stack ──────────────────────────────────────────────────────────
-# IMPORTANT: Starlette applies middleware in LIFO order (last registered = outermost).
-# CORSMiddleware MUST be registered LAST so it is the outermost layer and can
-# short-circuit OPTIONS preflights cleanly before other middleware interferes.
-
-# Innermost: trusted host guard
-app.add_middleware(
-    TrustedHostMiddleware,
-    allowed_hosts=["*"],  # Set to your Railway domain via env var if desired
-)
-
-# Middle: security response headers
+# ── Middleware ────────────────────────────────────────────────────────────────
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=["*"])
 app.add_middleware(SecurityHeadersMiddleware)
-
-# Outermost: CORS — registered LAST, executes FIRST on every request
-# allow_headers is explicit (no wildcard) to prevent header injection while
-# covering all headers required by the Next.js frontend + JWT auth.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -122,8 +114,6 @@ app.add_middleware(
 )
 
 # ── Routes ────────────────────────────────────────────────────────────────────
-# auth.router has prefix="/auth", so the full login path resolves to:
-#   POST /api/v1/auth/login  ✓
 app.include_router(auth.router,   prefix="/api/v1")
 app.include_router(scan.router,   prefix="/api/v1")
 app.include_router(user.router,   prefix="/api/v1")
@@ -133,29 +123,19 @@ app.include_router(threat.router, prefix="/api/v1")
 
 @app.get("/api/health")
 async def health():
-    return {"status": "ok", "version": settings.APP_VERSION}
+    return {"status": "ok", "version": settings.APP_VERSION, "edition": "SOC"}
 
 
 # ── Error handlers ────────────────────────────────────────────────────────────
 
 @app.exception_handler(RequestValidationError)
 async def validation_error_handler(request: Request, exc: RequestValidationError):
-    """
-    Normalise Pydantic 422 validation errors so field names / internal
-    schema details are not leaked to the client in production.
-    The first human-readable message is extracted and returned; the full
-    error structure is never exposed.
-    """
     errors = exc.errors()
     first_msg = "Validation error"
     if errors:
         raw = str(errors[0].get("msg", "Validation error"))
         first_msg = raw.replace("Value error, ", "").strip()
-
-    return JSONResponse(
-        status_code=422,
-        content={"detail": first_msg},
-    )
+    return JSONResponse(status_code=422, content={"detail": first_msg})
 
 
 @app.exception_handler(404)

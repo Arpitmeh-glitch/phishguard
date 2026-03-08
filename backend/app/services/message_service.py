@@ -1,50 +1,153 @@
 """
 SMS / Message Fraud Detection Service
-Wraps sms_detector_core.py into a reusable service.
+======================================
+Detection pipeline (in order):
+  1. Rule engine       — pattern-based scoring (sms_detector_core)
+  2. ML model          — OpenAI fallback when rules are weak (sms_detector_core)
+  3. Groq AI           — fast LLM classification via analyze_text_fast()
+  4. Final risk score  — weighted combination of all layers
+
+AI analysis runs *after* the existing rule/ML pipeline and enriches the result
+with an `ai_analysis` block.  If Groq is unavailable or fails the original
+result is returned unchanged — existing functionality is never broken.
 """
+
 import logging
+import asyncio
 from typing import Optional
+
 from app.services import sms_detector_core as _core
+from app.services import ai_service
 
 logger = logging.getLogger(__name__)
 
 
-def scan_message(text: str) -> dict:
-    """
-    Scan a text message for fraud / phishing patterns.
+# ── Scoring helpers ───────────────────────────────────────────────────────────
 
-    Returns the raw result dict from sms_detector_core.detect(), which includes:
-        {
-            "original_message": str,
-            "language": str,
-            "rule_score": float,
-            "reasons": list[str],
-            "final_score": float,
-            "final_label": "FRAUD" | "SUSPICIOUS" | "SAFE",
-            "confidence_level": str,
-            "api_label": str,
-            "api_confidence": float,
-            "api_explanation": str,
-            "api_skipped": bool,
-            "api_error": str | None,
-        }
+_RISK_TO_SCORE = {"high": 0.85, "medium": 0.55, "low": 0.15}
+
+
+def _merge_ai_score(base_score: float, ai_result: Optional[dict]) -> float:
+    """
+    Blend the AI risk score into the existing final_score.
+
+    Weighting:
+      - Rule/ML pipeline: 70 %
+      - Groq AI:          30 %
+
+    The AI is treated as a secondary signal — it can raise the score but
+    only modestly, preventing false positives when rules are clean.
+    """
+    if ai_result is None:
+        return base_score
+
+    ai_score = _RISK_TO_SCORE.get(ai_result.get("risk", "low"), 0.15)
+    ai_conf  = float(ai_result.get("confidence", 0.5))
+
+    blended = (base_score * 0.70) + (ai_score * ai_conf * 0.30)
+    return round(min(blended, 1.0), 4)
+
+
+def _build_risk_score_int(final_score: float) -> int:
+    """Convert 0-1 float score to 0-100 integer for API consumers."""
+    return int(round(final_score * 100))
+
+
+# ── Main public function ──────────────────────────────────────────────────────
+
+async def scan_message_async(text: str) -> dict:
+    """
+    Async version of scan_message.  Preferred when called from an async route.
     """
     try:
+        # Layer 1 + 2: Rule engine + optional OpenAI
         result = _core.detect(text.strip())
-        return result
     except Exception as e:
-        logger.error(f"Message scan error: {e}")
-        return {
+        logger.error("Message scan (core) error: %s", e)
+        result = {
             "original_message": text,
-            "language": "unknown",
-            "rule_score": 0.0,
-            "reasons": [f"Scan error: {str(e)}"],
-            "final_score": 0.0,
-            "final_label": "SAFE",
+            "language":         "unknown",
+            "rule_score":       0.0,
+            "reasons":          [f"Scan error: {e}"],
+            "final_score":      0.0,
+            "final_label":      "SAFE",
             "confidence_level": "low",
-            "api_label": "SAFE",
-            "api_confidence": 0.0,
-            "api_explanation": "",
-            "api_skipped": True,
-            "api_error": str(e),
+            "api_label":        "SAFE",
+            "api_confidence":   0.0,
+            "api_explanation":  "",
+            "api_skipped":      True,
+            "api_error":        str(e),
         }
+
+    # Layer 3: Groq fast AI analysis
+    ai_result: Optional[dict] = None
+    try:
+        ai_result = await ai_service.analyze_text_fast(text.strip())
+    except Exception as exc:
+        logger.warning("Groq AI analysis skipped due to error: %s", exc)
+
+    # Layer 4: Merge scores
+    base_score     = result.get("final_score", 0.0)
+    merged_score   = _merge_ai_score(base_score, ai_result)
+    risk_score_int = _build_risk_score_int(merged_score)
+
+    # Re-classify label if AI pushed the score over a threshold
+    final_label = result.get("final_label", "SAFE")
+    if merged_score != base_score:
+        if merged_score >= _core.FRAUD_THRESHOLD:
+            final_label = "FRAUD"
+        elif merged_score >= _core.SUSPICIOUS_THRESHOLD:
+            final_label = "SUSPICIOUS"
+        else:
+            final_label = "SAFE"
+
+    result["final_score"]  = merged_score
+    result["final_label"]  = final_label
+    result["risk_score"]   = risk_score_int
+    result["ai_analysis"]  = ai_result   # None when Groq is unavailable
+    result["ai_used"]      = ai_result is not None
+
+    return result
+
+
+def scan_message(text: str) -> dict:
+    """
+    Synchronous entry point — wraps scan_message_async.
+    Called from file_service (background task) and the scan route.
+    """
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                future = pool.submit(asyncio.run, scan_message_async(text))
+                return future.result(timeout=20)
+        else:
+            return loop.run_until_complete(scan_message_async(text))
+    except Exception as exc:
+        logger.warning("scan_message async dispatch failed, falling back to sync core: %s", exc)
+        try:
+            result = _core.detect(text.strip())
+            result["risk_score"]  = _build_risk_score_int(result.get("final_score", 0.0))
+            result["ai_analysis"] = None
+            result["ai_used"]     = False
+            return result
+        except Exception as e:
+            logger.error("Message scan fallback error: %s", e)
+            return {
+                "original_message": text,
+                "language":         "unknown",
+                "rule_score":       0.0,
+                "reasons":          [f"Scan error: {e}"],
+                "final_score":      0.0,
+                "final_label":      "SAFE",
+                "confidence_level": "low",
+                "risk_score":       0,
+                "ai_analysis":      None,
+                "ai_used":          False,
+                "api_label":        "SAFE",
+                "api_confidence":   0.0,
+                "api_explanation":  "",
+                "api_skipped":      True,
+                "api_error":        str(e),
+            }

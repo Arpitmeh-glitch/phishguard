@@ -75,8 +75,12 @@ class URLScanResponse(BaseModel):
     scan_id: UUID
     label: str
     confidence: float
+    risk_score: int = 0
     reasons: List[str]
     detection_mode: str
+    ai_analysis: Optional[dict] = None
+    threat_explanation: Optional[dict] = None
+    vt_result: Optional[dict] = None
     created_at: datetime
 
 
@@ -86,9 +90,11 @@ class MessageScanResponse(BaseModel):
     final_score: float
     rule_score: float
     confidence_level: str
+    risk_score: int = 0
     reasons: List[str]
     language: str
     api_used: bool
+    ai_analysis: Optional[dict] = None
     created_at: datetime
 
 
@@ -161,3 +167,28 @@ class APIKeyResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+# ── Admin Extended Schemas ────────────────────────────────────────────────────
+
+class AdminCreateUser(BaseModel):
+    email: EmailStr
+    username: str = Field(..., min_length=3, max_length=50)
+    password: str = Field(..., min_length=8, max_length=100)
+    role: str = Field(default="user", pattern="^(user|analyst|admin)$")
+
+
+class AdminResetPassword(BaseModel):
+    new_password: str = Field(..., min_length=8, max_length=100)
+
+
+class AuditLogOut(BaseModel):
+    id: str
+    user_id: Optional[str]
+    username: str
+    action: str
+    resource: Optional[str]
+    resource_id: Optional[str]
+    ip_address: Optional[str]
+    details: Optional[dict]
+    created_at: str

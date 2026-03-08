@@ -7,7 +7,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   Shield, Globe, MessageSquare, FileSearch,
   History, LogOut, BarChart3, Users, Activity,
-  Wifi, ScrollText, Info, Menu, X,
+  Network, ScrollText, Info, Menu, X,
 } from "lucide-react";
 import { useAuthStore } from "@/lib/store";
 
@@ -16,7 +16,7 @@ const navItems = [
   { href: "/dashboard/url",      icon: Globe,         label: "URL Scanner"         },
   { href: "/dashboard/message",  icon: MessageSquare, label: "Message Scanner"     },
   { href: "/dashboard/file",     icon: FileSearch,    label: "File Scanner"        },
-  { href: "/dashboard/threat",   icon: Wifi,          label: "Live Threat"         },
+  { href: "/dashboard/network",  icon: Network,       label: "Network Scanner"    },
   { href: "/dashboard/history",  icon: History,       label: "Scan History"        },
 ];
 

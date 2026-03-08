@@ -106,20 +106,31 @@ export const userApi = {
 
 // Threat Detection
 export const threatApi = {
-  live: (count = 20) => api.get("/threat/live", { params: { count } }),
-  analyze: (domain: string, port?: number) => api.post("/threat/analyze", { domain, port }),
+  // Single-domain threat analysis (unchanged)
+  analyze: (domain: string, port?: number, ip?: string) =>
+    api.post("/threat/analyze", { domain, port, ip }),
+
+  // Network scanner — replaces the old /threat/live endpoint
+  networkScan: () => api.get("/threat/network-scan"),
 };
 
 // Admin
 export const adminApi = {
   stats: () => api.get("/admin/stats"),
-  users: (page = 1, per_page = 20) =>
-    api.get("/admin/users", { params: { page, per_page } }),
+  users: (page = 1, per_page = 20, params?: Record<string, unknown>) =>
+    api.get("/admin/users", { params: { page, per_page, ...params } }),
+  createUser: (data: { email: string; username: string; password: string; role: string }) =>
+    api.post("/admin/users", data),
+  deleteUser: (userId: string) =>
+    api.delete(`/admin/users/${userId}`),
   updateRole: (userId: string, role: string) =>
     api.patch(`/admin/users/${userId}/role`, { role }),
   toggleUser: (userId: string) =>
     api.patch(`/admin/users/${userId}/toggle`),
-  logs: (page = 1) => api.get("/admin/logs", { params: { page } }),
+  resetPassword: (userId: string, new_password: string) =>
+    api.post(`/admin/users/${userId}/reset-password`, { new_password }),
+  logs: (page = 1, params?: Record<string, unknown>) =>
+    api.get("/admin/logs", { params: { page, per_page: 50, ...params } }),
   scans: (page = 1, label?: string) => {
     const params: Record<string, unknown> = { page };
     if (label) params.label = label;

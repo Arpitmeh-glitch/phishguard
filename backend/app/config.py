@@ -27,7 +27,12 @@ class Settings(BaseSettings):
     
     # OpenAI (optional)
     OPENAI_API_KEY: Optional[str] = None
-    
+    # Google Gemini API
+    GEMINI_API_KEY: Optional[str] = None
+    # Groq API (fast LLM inference)
+    GROQ_API_KEY: Optional[str] = None
+    # VirusTotal threat intelligence (free tier: 4 req/min, 500 req/day)
+    VIRUSTOTAL_API_KEY: Optional[str] = None
     # File uploads
     MAX_FILE_SIZE_MB: int = 10
     UPLOAD_DIR: str = "/app/uploads"
