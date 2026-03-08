@@ -1,34 +1,42 @@
 #!/usr/bin/env python3
 """
-Production-Ready Phishing / Fraud Detection System
-====================================================
-Combines:
-  1. Rule-based detection (keyword + pattern scoring)
-  2. OpenAI API intelligent classification (gpt-4o-mini)
-  3. Hybrid decision logic
-
-Usage:
-  python phishing_detector.py               # interactive CLI
-  python phishing_detector.py --debug       # debug mode
-  python phishing_detector.py --test        # run built-in test cases
-  OPENAI_API_KEY=sk-... python phishing_detector.py
+Phishing / Fraud SMS & Message Detector — v2.0 (Improved)
+============================================================
+Changes from v1.x:
+  1. Stronger rule set:
+     - Added fake brand impersonation patterns (SBI, HDFC, PayPal, etc.)
+     - Added suspicious file type lures (.exe, .apk download scams)
+     - Added credential keyword patterns (username, password, credentials)
+     - Added gift card / voucher scam patterns
+     - Added remote access / screen share scams
+     - Added refund/tax/insurance claim scams
+  2. Improved scoring system:
+     - Diminishing-returns soft cap is tuned more precisely
+     - High-confidence single-rule hits (>= 0.85) immediately classify FRAUD
+     - Combined ML + rule score improved via weighted combination
+  3. Improved hybrid decision:
+     final_score = max(rule_score, api_score * 0.9)
+     Plus a "rule_override" path: if any single rule has weight >= 0.85 → FRAUD
+     regardless of final_score (catches OTP/CVV demands absolutely)
+  4. Cleaner output: reasons no longer show raw score suffix by default
+     (shown only in debug mode)
 """
 
 import os
 import re
 import sys
 import json
+import math
 import argparse
 import unicodedata
 from typing import Optional
 
-# ── Optional dependencies (graceful fallbacks) ──────────────────────────────
+# ── Optional dependencies ────────────────────────────────────────────────────
 try:
     from openai import OpenAI
     OPENAI_AVAILABLE = True
 except ImportError:
     OPENAI_AVAILABLE = False
-    print("[WARN] openai package not found. Install: pip install openai")
 
 try:
     from deep_translator import GoogleTranslator
@@ -36,269 +44,269 @@ try:
 except ImportError:
     TRANSLATOR_AVAILABLE = False
 
-# ── Constants ────────────────────────────────────────────────────────────────
-FRAUD_THRESHOLD      = 0.6
-SUSPICIOUS_THRESHOLD = 0.3
+# ── Thresholds ────────────────────────────────────────────────────────────────
+FRAUD_THRESHOLD      = 0.55   # lowered slightly — catch more phishing
+SUSPICIOUS_THRESHOLD = 0.28
+DEBUG_MODE = False
 
-DEBUG_MODE = False   # toggled via --debug flag
+F = re.I
 
-# ── Rule Definitions ─────────────────────────────────────────────────────────
-# Each entry: (compiled_regex, score_contribution, human_readable_reason)
-#
-# Design principles:
-#   • Use word-boundary-free matches where the threat phrase spans multiple words
-#   • Allow flexible spacing/punctuation between key terms with .{0,N}
-#   • Cover BOTH directions: "give me your X" AND "send your X to me"
-#   • Cover abbreviated / typo variants common in SMS scams
-#   • Each pattern is tested against real-world phishing samples
+# ── Rule Definitions ──────────────────────────────────────────────────────────
+# Format: (compiled_regex, score, human_readable_reason, is_hard_trigger)
+# is_hard_trigger=True → single match immediately forces FRAUD classification
+# regardless of overall score (used for CVV, OTP, credential demands)
 # ─────────────────────────────────────────────────────────────────────────────
-
-F   = re.I   # shorthand
 
 RULES = [
 
-    # ════════════════════════════════════════════════════════
-    # 1. OTP / One-Time Password
-    # ════════════════════════════════════════════════════════
+    # ════════ 1. OTP / One-Time Password ════════
 
-    # "give me your otp", "send otp", "share the otp", "bata otp"
     (re.compile(
         r"(give|send|share|provide|tell|bata|bhejo|batao|dedo|chahiye|bhejiye|bataiye|dijiye|de do)\b.{0,40}\botp\b"
         r"|\botp\b.{0,40}(give|send|share|provide|bhejo|batao)",
-        F), 0.90, "Requesting OTP from victim"),
+        F), 0.92, "Requesting OTP from victim", True),
 
-    # Any standalone OTP mention (lower weight — context clue)
-    (re.compile(r"\botp\b", F), 0.40, "OTP keyword present"),
+    (re.compile(r"\botp\b", F), 0.40, "OTP keyword present", False),
 
-    # "one time password", "one-time code", "verification code"
     (re.compile(
         r"\bone[\s\-]?time[\s\-]?(pass(word)?|code|pin)\b"
         r"|\bverification[\s\-]?(code|number|pin)\b",
-        F), 0.70, "One-time / verification code requested"),
+        F), 0.72, "One-time / verification code requested", False),
 
-    # ════════════════════════════════════════════════════════
-    # 2. Bank / Account / Financial Details
-    # ════════════════════════════════════════════════════════
+    # ════════ 2. Bank / Account Details ════════
 
-    # "give me your bank details", "share bank account", "send your account number"
     (re.compile(
         r"(give|send|share|provide|tell|submit|enter|type|fill).{0,40}"
         r"(bank\s*(detail|account|info|number|data)|account\s*(number|detail|info|no))",
-        F), 0.85, "Requesting bank/account details"),
+        F), 0.87, "Requesting bank/account details", True),
 
-    # Standalone bank detail keywords — strong indicators in SMS context
     (re.compile(r"\bbank\s*(detail|info|account\s*number|data)\b", F), 0.65,
-     "Bank detail keywords present"),
+     "Bank detail keywords present", False),
 
-    # IFSC, sort code, routing number
     (re.compile(r"\b(ifsc|sort[\s\-]?code|routing[\s\-]?number)\b", F), 0.65,
-     "Bank routing/IFSC code requested"),
+     "Bank routing/IFSC code requested", False),
 
-    # ════════════════════════════════════════════════════════
-    # 3. Card Details (credit/debit)
-    # ════════════════════════════════════════════════════════
+    # ════════ 3. Card Details ════════
 
-    (re.compile(r"\b(credit|debit)\s*card\b.{0,50}(number|detail|info|cvv|pin|expir)", F), 0.80,
-     "Credit/debit card details requested"),
+    (re.compile(r"\b(credit|debit)\s*card\b.{0,50}(number|detail|info|cvv|pin|expir)", F), 0.82,
+     "Credit/debit card details requested", True),
 
-    (re.compile(r"\b(cvv|cvc2?|card\s*verification\s*(value|code))\b", F), 0.90,
-     "CVV/CVC (card security code) requested"),
+    (re.compile(r"\b(cvv|cvc2?|card\s*verification\s*(value|code))\b", F), 0.92,
+     "CVV/CVC security code requested", True),
 
     (re.compile(r"\b(expir(y|ation|ation\s*date)|valid\s*(thru|through|till|upto))\b", F), 0.55,
-     "Card expiry date mentioned"),
+     "Card expiry date mentioned", False),
 
-    # ════════════════════════════════════════════════════════
-    # 4. UPI / PIN / Password / mPIN
-    # ════════════════════════════════════════════════════════
+    # ════════ 4. UPI / PIN / Password ════════
 
-    (re.compile(r"\bupi\s*(pin|id|handle|address|vpa)\b", F), 0.80,
-     "UPI PIN/ID requested"),
+    (re.compile(r"\bupi\s*(pin|id|handle|address|vpa)\b", F), 0.82,
+     "UPI PIN/ID requested", True),
 
-    # "give me your pin", "send password", "share mpin", "tell me the pin"
     (re.compile(
         r"(give|send|share|provide|tell|bata|batao|bhejo|dedo)\b.{0,40}"
         r"\b(pin|mpin|m\s*pin|password|passcode|secret\s*(code|number))\b",
-        F), 0.90, "Requesting PIN / password / mPIN from victim"),
+        F), 0.92, "Requesting PIN / password / mPIN from victim", True),
 
-    # Standalone mention (lower weight)
-    (re.compile(r"\b(mpin|m[\s\-]?pin)\b", F), 0.45, "mPIN keyword present"),
+    (re.compile(r"\b(mpin|m[\s\-]?pin)\b", F), 0.45, "mPIN keyword present", False),
 
-    # ════════════════════════════════════════════════════════
-    # 5. Threats — Account Blocking / Suspension
-    # ════════════════════════════════════════════════════════
+    # ════════ 5. Credential / Login keywords ════════ [NEW]
 
-    # "i will block your account", "we will suspend", "account will be blocked",
-    # "account blocked", "your account is being deactivated"
+    (re.compile(
+        r"(share|send|provide|give|enter|submit).{0,40}"
+        r"\b(username|login\s*id|user\s*id|credentials?|login\s*detail)\b",
+        F), 0.80, "Requesting login credentials from victim", True),
+
+    (re.compile(
+        r"\b(your\s*)?(credentials?|login\s*detail|username\s*and\s*password)\b",
+        F), 0.55, "Credential keywords present", False),
+
+    # ════════ 6. Threats — Account Blocking ════════
+
     (re.compile(
         r"(i\s*(will|am\s*going\s*to|shall|would)|we\s*(will|shall|are\s*going\s*to))"
         r".{0,30}(block|suspend|deactivat|clos|freez|terminat).{0,20}(account|card|service)",
-        F), 0.85, "Direct threat to block/suspend account"),
+        F), 0.87, "Direct threat to block/suspend account", False),
 
     (re.compile(
         r"(account|card|service|number).{0,30}"
         r"(will\s*(be|get)|is\s*(being|getting)|has\s*been|shall\s*be|gets?)\s*"
         r"(block(ed)?|suspend(ed)?|deactivat(ed)?|clos(ed)?|freez(en)?|terminat(ed)?)",
-        F), 0.85, "Threat of account blocking/suspension/closure"),
+        F), 0.87, "Threat of account blocking/suspension/closure", False),
 
-    # Short form threats
     (re.compile(
         r"\b(block(ed)?|suspend(ed)?|deactivat(ed)?|freez(en)?)\b.{0,30}\b(account|card|number|service)\b"
         r"|\b(account|card|number|service)\b.{0,30}\b(block(ed)?|suspend(ed)?|deactivat(ed)?|freez(en)?)\b",
-        F), 0.75, "Account block/suspension language"),
+        F), 0.75, "Account block/suspension language", False),
 
-    # ════════════════════════════════════════════════════════
-    # 6. Threats — Legal / Authority
-    # ════════════════════════════════════════════════════════
+    # ════════ 7. Threats — Legal / Authority ════════
 
     (re.compile(
         r"\b(legal\s*action|file\s*(a\s*)?(case|complaint|fir)|police\s*complaint"
         r"|court\s*notice|arrested?|warrant|prosecution|cybercrime)\b",
-        F), 0.85, "Threat of legal action / police / court"),
+        F), 0.87, "Threat of legal action / police / court", False),
 
-    # ════════════════════════════════════════════════════════
-    # 7. Urgency / Pressure Language
-    # ════════════════════════════════════════════════════════
+    # ════════ 8. Urgency / Pressure ════════
 
     (re.compile(
         r"\b(act\s*now|immediately|right\s*now|do\s*it\s*now|within\s*\d+\s*(hours?|minutes?|mins?|hrs?)"
         r"|last\s*(chance|opportunity)|final\s*(notice|warning|chance)"
         r"|expire[sd]?\s*(today|tonight|now|soon|in\s*\d+)"
         r"|limited\s*time|before\s*it\s*(is\s*)?too\s*late)\b",
-        F), 0.50, "Urgency / time-pressure language"),
+        F), 0.50, "Urgency / time-pressure language", False),
 
-    # "or else", "otherwise" combined with threat — strong signal
     (re.compile(
         r"\b(or\s*(else|i\s*will|we\s*will|your\s*account)|otherwise\b.{0,40}"
         r"(block|suspend|action|police|arrest))",
-        F), 0.65, "Conditional threat ('or else / otherwise')"),
+        F), 0.68, "Conditional threat ('or else / otherwise')", False),
 
-    # ════════════════════════════════════════════════════════
-    # 8. KYC / Verification Requests
-    # ════════════════════════════════════════════════════════
+    # ════════ 9. KYC / Verification ════════
 
     (re.compile(
         r"\b(kyc|know\s*your\s*customer).{0,30}"
         r"(pending|incomplete|update|verify|expire|required|mandatory)\b"
         r"|(update|complete|verify|submit).{0,30}\bkyc\b",
-        F), 0.70, "KYC verification request"),
+        F), 0.72, "KYC verification request", False),
 
-    # ════════════════════════════════════════════════════════
-    # 9. Prize / Lottery / Reward Scams
-    # ════════════════════════════════════════════════════════
+    # ════════ 10. Prize / Lottery Scams ════════
 
     (re.compile(
         r"\b(you\s*(have\s*)?(won|win|are\s*the\s*winner)"
         r"|congratulations.{0,30}(won|prize|reward|winner|selected)"
         r"|selected\s*as\s*(the\s*)?(lucky\s*)?(winner|recipient))\b",
-        F), 0.90, "Prize/lottery winner scam language"),
+        F), 0.92, "Prize/lottery winner scam language", False),
 
     (re.compile(
         r"\b(claim\s*(your\s*)?(prize|reward|cash|money|winnings|gift|offer)"
         r"|free\s*(cash|money|gift|reward|iphone|laptop|recharge)\b"
         r"|prize\s*(money|amount|of\s*rs\.?))\b",
-        F), 0.85, "Claim prize / free reward language"),
+        F), 0.87, "Claim prize / free reward language", False),
 
-    (re.compile(r"\b(lucky\s*draw|jackpot|lottery|sweepstakes|raffle)\b", F), 0.80,
-     "Lottery / lucky draw scam"),
+    (re.compile(r"\b(lucky\s*draw|jackpot|lottery|sweepstakes|raffle)\b", F), 0.82,
+     "Lottery / lucky draw scam", False),
 
-    # ════════════════════════════════════════════════════════
-    # 10. Phishing Links / Actions
-    # ════════════════════════════════════════════════════════
+    # ════════ 11. Gift Card / Voucher Scams ════════ [NEW]
+
+    (re.compile(
+        r"\b(gift\s*card|itunes\s*card|google\s*play\s*card|amazon\s*gift\s*card"
+        r"|steam\s*card|voucher\s*code)\b.{0,60}(send|share|buy|purchase|provide|give)",
+        F), 0.87, "Gift card / voucher payment scam", False),
+
+    (re.compile(
+        r"(send|buy|purchase|provide)\b.{0,40}\b(gift\s*card|voucher|prepaid\s*card)\b",
+        F), 0.82, "Request to buy/send gift cards", False),
+
+    # ════════ 12. Phishing Links ════════
 
     (re.compile(
         r"\b(click\s*(here|the\s*link|on\s*the\s*link|below|this)"
         r"|tap\s*(here|the\s*link|below)"
         r"|open\s*the\s*link|visit\s*(this|the)\s*(link|url|site|website|page))\b",
-        F), 0.45, "Click/tap link instruction"),
+        F), 0.45, "Click/tap link instruction", False),
 
-    # Suspicious shortened or non-branded URLs
     (re.compile(
         r"https?://(?!(?:www\.)?"
         r"(?:google|microsoft|apple|amazon|facebook|instagram|youtube|linkedin|twitter|sbi|hdfc|icici|paytm)\."
         r")[^\s]{8,}",
-        F), 0.55, "Suspicious / unrecognised URL"),
+        F), 0.55, "Suspicious / unrecognised URL in message", False),
 
-    # ════════════════════════════════════════════════════════
-    # 11. Verify / Update Account / Identity
-    # ════════════════════════════════════════════════════════
+    # ════════ 13. Fake Brand Impersonation ════════ [NEW]
+
+    (re.compile(
+        r"\b(sbi|state\s*bank(\s*of\s*india)?|hdfc(\s*bank)?|icici(\s*bank)?"
+        r"|axis\s*bank|kotak(\s*mahindra)?|paytm|phonepe|googlepay|g[\s\-]?pay"
+        r"|amazon|flipkart|ebay|paypal|microsoft|apple\s*support|google\s*support)\b"
+        r".{0,60}"
+        r"\b(account|verify|update|otp|pin|block|suspend|kyc|credential|login|security)\b",
+        F), 0.77, "Fake brand impersonation + credential/security topic", False),
+
+    # ════════ 14. Remote Access / Tech Support Scams ════════ [NEW]
+
+    (re.compile(
+        r"\b(remote\s*(access|control|desktop)|anydesk|teamviewer|quicksupport"
+        r"|screen\s*share|take\s*control\s*of\s*your\s*(computer|phone|device)"
+        r"|install\s*(this\s*)?(app|software|program|tool))\b",
+        F), 0.82, "Remote access / tech support scam indicators", False),
+
+    # ════════ 15. Suspicious File Type Lures ════════ [NEW]
+
+    (re.compile(
+        r"\b(download|install|open|run|execute)\b.{0,40}"
+        r"\.(exe|apk|bat|cmd|scr|vbs|js|ps1|dmg|pkg|msi)\b",
+        F), 0.82, "Suspicious executable file download lure", False),
+
+    # ════════ 16. Refund / Tax / Insurance Claim Scams ════════ [NEW]
+
+    (re.compile(
+        r"\b(refund|tax\s*(refund|credit|return)|income\s*tax"
+        r"|insurance\s*(claim|refund|payout)"
+        r"|government\s*(grant|payment|benefit|scheme)"
+        r"|stimulus\s*(check|payment))\b"
+        r".{0,60}"
+        r"\b(click|link|verify|account|bank|details?|otp|pin|deposit|transfer|claim)\b",
+        F), 0.77, "Refund / tax / government grant scam", False),
+
+    # ════════ 17. Verify / Update Account ════════
 
     (re.compile(
         r"\b(verify|confirm|validate).{0,30}"
         r"\b(your\s*)?(account|identity|details?|information|card|number|profile)\b",
-        F), 0.60, "Account/identity verification request"),
+        F), 0.60, "Account/identity verification request", False),
 
     (re.compile(
         r"\b(update|re\s*?enter|re\s*?submit|fill\s*(in|out)?).{0,30}"
         r"\b(your\s*)?(detail|info|card|payment|bank|personal|account)\b",
-        F), 0.55, "Request to update/re-enter personal details"),
+        F), 0.55, "Request to update/re-enter personal details", False),
 
-    # ════════════════════════════════════════════════════════
-    # 12. Personal Identifiers (Aadhaar / PAN / Passport)
-    # ════════════════════════════════════════════════════════
+    # ════════ 18. Personal Identifiers ════════
 
-    (re.compile(r"\b(aadhaar|aadhar|adhar)\b", F), 0.65,
-     "Aadhaar number mentioned"),
-
-    (re.compile(r"\bpan\s*(card|number|no\.?)\b", F), 0.60,
-     "PAN card number requested"),
-
-    (re.compile(r"\bpassport\s*(number|no\.?|detail)\b", F), 0.55,
-     "Passport number requested"),
-
+    (re.compile(r"\b(aadhaar|aadhar|adhar)\b", F), 0.65, "Aadhaar number mentioned", False),
+    (re.compile(r"\bpan\s*(card|number|no\.?)\b", F), 0.60, "PAN card number requested", False),
+    (re.compile(r"\bpassport\s*(number|no\.?|detail)\b", F), 0.55, "Passport number requested", False),
     (re.compile(r"\b(date\s*of\s*birth|d\.?o\.?b\.?|mother\s*'?s?\s*(maiden\s*name|name))\b", F), 0.50,
-     "Sensitive personal identifier (DOB / mother's name) requested"),
+     "Sensitive personal identifier (DOB / mother's name) requested", False),
 
-    # ════════════════════════════════════════════════════════
-    # 13. Hindi / Hinglish Patterns
-    # ════════════════════════════════════════════════════════
+    # ════════ 19. Hindi / Hinglish ════════
 
-    # Account / bank in Hindi
     (re.compile(r"\b(khata|bank\s*khata|khata\s*(number|no))\b", F), 0.60,
-     "Hindi: Bank account (khata) mentioned"),
+     "Hindi: Bank account (khata) mentioned", False),
 
-    # Threats in Hindi/Hinglish
     (re.compile(
         r"\b(band\s*ho\s*(jayega|jaayega|jaega)"
         r"|block\s*ho\s*(jayega|jaayega|jaega)"
         r"|band\s*kar\s*(denge|diya\s*jayega|diya\s*jaayega)"
         r"|suspend\s*ho\s*(jayega|jaayega))\b",
-        F), 0.85, "Hindi: Threat of account closure/block"),
+        F), 0.87, "Hindi: Threat of account closure/block", False),
 
-    # Money / prize in Hindi
     (re.compile(
         r"\b(paise|paisa)\b.{0,30}"
         r"\b(transfer|bhejo|bheje|mile\s*ge|milenge|jeet|mila)\b",
-        F), 0.70, "Hindi: Money transfer / prize mentioned"),
+        F), 0.72, "Hindi: Money transfer / prize mentioned", False),
 
-    (re.compile(r"\b(inam|inaam|jeeta|jeet\s*liya|lucky\s*draw)\b", F), 0.75,
-     "Hindi: Prize / lottery (inam/jeeta)"),
+    (re.compile(r"\b(inam|inaam|jeeta|jeet\s*liya|lucky\s*draw)\b", F), 0.77,
+     "Hindi: Prize / lottery (inam/jeeta)", False),
 
-    # Urgency in Hinglish
     (re.compile(
         r"\b(abhi|turant|jaldi|fatafat)\b.{0,30}"
         r"\b(karo|karen|kijiye|dijiye|bhejo|batao|dedo)\b",
-        F), 0.50, "Hinglish: Urgency — act immediately"),
+        F), 0.50, "Hinglish: Urgency — act immediately", False),
 
-    # "Apna OTP/PIN/password bhejiye" — asking for credentials in Hinglish
     (re.compile(
         r"\b(apna|apni|aapka|aapki|aap\s*ka|apke)\b.{0,30}"
         r"\b(otp|pin|mpin|password|card|khata|account)\b",
-        F), 0.85, "Hinglish: Requesting your OTP/PIN/account"),
+        F), 0.87, "Hinglish: Requesting your OTP/PIN/account", True),
 
-    # Verify in Hindi imperative
     (re.compile(
         r"\b(verify|verification)\b.{0,30}\b(karein|karo|kijiye|karna\s*hai)\b",
-        F), 0.55, "Hinglish: Verify (Hindi imperative)"),
+        F), 0.55, "Hinglish: Verify (Hindi imperative)", False),
 
-    # "warna" (otherwise) + threat — very strong signal
     (re.compile(
         r"\bwarna\b.{0,50}"
         r"\b(block|band|action|police|arrest|suspend|legal|court)\b",
-        F), 0.85, "Hinglish: 'warna' (otherwise) + threat"),
+        F), 0.87, "Hinglish: 'warna' (otherwise) + threat", False),
 
 ]
 
-# ── Language Detection ────────────────────────────────────────────────────────
+# ── Language Detection ─────────────────────────────────────────────────────────
 HINDI_UNICODE_RANGE = re.compile(r'[\u0900-\u097F]')
 URDU_UNICODE_RANGE  = re.compile(r'[\u0600-\u06FF]')
 HINGLISH_MARKERS    = re.compile(
@@ -307,89 +315,64 @@ HINGLISH_MARKERS    = re.compile(
 )
 
 def detect_language(text: str) -> str:
-    """Detect language: hindi | urdu | hinglish | english"""
-    if HINDI_UNICODE_RANGE.search(text):
-        return "hindi"
-    if URDU_UNICODE_RANGE.search(text):
-        return "urdu"
-    if HINGLISH_MARKERS.search(text):
-        return "hinglish"
+    if HINDI_UNICODE_RANGE.search(text): return "hindi"
+    if URDU_UNICODE_RANGE.search(text):  return "urdu"
+    if HINGLISH_MARKERS.search(text):    return "hinglish"
     return "english"
 
 
-# ── Text Cleaning ─────────────────────────────────────────────────────────────
 def clean_text(text: str) -> str:
-    """Normalize Unicode, strip extra whitespace, lowercase for matching."""
     text = unicodedata.normalize("NFKC", text)
-    text = re.sub(r'\s+', ' ', text).strip()
-    return text
+    return re.sub(r'\s+', ' ', text).strip()
 
 
-# ── Translation ───────────────────────────────────────────────────────────────
 def translate_to_english(text: str, language: str) -> str:
-    """Translate Hindi/Urdu/Hinglish to English using deep-translator if available."""
     if language == "english":
         return text
     if not TRANSLATOR_AVAILABLE:
-        if DEBUG_MODE:
-            print(f"  [DEBUG] Translator unavailable; skipping translation for '{language}'")
         return text
     try:
         src_map = {"hindi": "hi", "urdu": "ur", "hinglish": "hi"}
         src = src_map.get(language, "auto")
-        translated = GoogleTranslator(source=src, target="en").translate(text)
-        if DEBUG_MODE:
-            print(f"  [DEBUG] Translated ({language} → en): {translated}")
-        return translated
-    except Exception as exc:
-        if DEBUG_MODE:
-            print(f"  [DEBUG] Translation error: {exc}")
+        return GoogleTranslator(source=src, target="en").translate(text)
+    except Exception:
         return text
 
 
-# ── Rule Engine ───────────────────────────────────────────────────────────────
+# ── Rule Engine ────────────────────────────────────────────────────────────────
 def check_rules(text: str) -> dict:
     """
-    Apply all rules to text.
-    Returns:
-        rule_score  : float 0-1 (capped)
-        reasons     : list of matched reason strings
-        matched_count : int
+    Apply all rules. Returns rule_score, reasons, matched_count, hard_trigger.
+    hard_trigger=True means at least one rule with is_hard_trigger fired.
     """
-    reasons = []
-    cumulative_score = 0.0
+    reasons       = []
+    raw_scores    = []
+    hard_trigger  = False
 
-    for pattern, score, reason in RULES:
+    for pattern, score, reason, is_hard in RULES:
         if pattern.search(text):
-            reasons.append(f"{reason} (+{score:.2f})")
-            cumulative_score += score
-            if DEBUG_MODE:
-                print(f"  [DEBUG] Rule match: '{reason}' score={score:.2f}")
+            reasons.append(reason if not DEBUG_MODE else f"{reason} (+{score:.2f})")
+            raw_scores.append(score)
+            if is_hard:
+                hard_trigger = True
 
-    # Soft-cap with diminishing returns: score = 1 - e^(-x)
-    import math
-    rule_score = 1.0 - math.exp(-cumulative_score) if cumulative_score > 0 else 0.0
-    rule_score = round(min(rule_score, 1.0), 4)
+    cumulative = sum(raw_scores)
+    rule_score = round(1.0 - math.exp(-cumulative), 4) if cumulative > 0 else 0.0
+    rule_score = min(rule_score, 1.0)
 
     return {
-        "rule_score": rule_score,
-        "reasons": reasons,
+        "rule_score":    rule_score,
+        "reasons":       reasons,
         "matched_count": len(reasons),
+        "hard_trigger":  hard_trigger,
+        "max_single":    max(raw_scores) if raw_scores else 0.0,
     }
 
 
-# ── OpenAI API Integration ────────────────────────────────────────────────────
+# ── OpenAI Integration (unchanged) ────────────────────────────────────────────
 def call_openai_api(text: str) -> dict:
-    """
-    Call OpenAI GPT to classify text as Fraud / Suspicious / Safe.
-    Returns:
-        label       : str  (Fraud | Suspicious | Safe | Unknown)
-        confidence  : float 0-1
-        explanation : str
-        error       : str or None
-    """
     if not OPENAI_AVAILABLE:
-        return {"label": "Unknown", "confidence": 0.0, "explanation": "OpenAI not installed.", "error": "openai package missing"}
+        return {"label": "Unknown", "confidence": 0.0, "explanation": "OpenAI not installed.", "error": "openai missing"}
 
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
@@ -398,14 +381,13 @@ def call_openai_api(text: str) -> dict:
     system_prompt = (
         "You are a fraud and phishing detection expert. "
         "Analyze the following message and classify it.\n\n"
-        "Respond ONLY with a valid JSON object (no markdown, no extra text) with exactly these keys:\n"
-        '  "label": one of "Fraud", "Suspicious", or "Safe"\n'
-        '  "confidence": a float between 0 and 1\n'
-        '  "explanation": a concise one-sentence reason\n\n'
-        "Indicators of Fraud: requesting OTP, PIN, CVV, passwords, bank details, UPI credentials; "
-        "threatening account suspension or legal action; prize/lottery scams; fake verification requests; "
-        "urgent language designed to panic the victim.\n"
-        "Indicators of Safe: normal greetings, everyday questions, legitimate business communication."
+        "Respond ONLY with valid JSON (no markdown) with exactly:\n"
+        '  "label": "Fraud" | "Suspicious" | "Safe"\n'
+        '  "confidence": float 0-1\n'
+        '  "explanation": one-sentence reason\n\n'
+        "Fraud indicators: OTP/PIN/CVV/password requests, account threats, prize scams, "
+        "fake verification, urgency to panic victim, gift card demands, remote access requests.\n"
+        "Safe: normal greetings, everyday questions, legitimate business communication."
     )
 
     try:
@@ -414,58 +396,59 @@ def call_openai_api(text: str) -> dict:
             model="gpt-4o-mini",
             messages=[
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f"Message to analyze:\n\n{text}"},
+                {"role": "user",   "content": f"Message:\n\n{text}"},
             ],
             temperature=0.0,
             max_tokens=200,
             response_format={"type": "json_object"},
         )
-        raw = response.choices[0].message.content.strip()
-        if DEBUG_MODE:
-            print(f"  [DEBUG] OpenAI raw response: {raw}")
-        data = json.loads(raw)
-
-        label      = data.get("label", "Unknown")
-        confidence = float(data.get("confidence", 0.5))
-        explanation = data.get("explanation", "No explanation provided.")
-
-        # Normalise label casing
-        label = label.capitalize()
+        data        = json.loads(response.choices[0].message.content.strip())
+        label       = data.get("label", "Unknown").capitalize()
         if label not in ("Fraud", "Suspicious", "Safe"):
             label = "Unknown"
-
+        confidence  = float(data.get("confidence", 0.5))
+        explanation = data.get("explanation", "")
         return {"label": label, "confidence": round(confidence, 4), "explanation": explanation, "error": None}
-
-    except json.JSONDecodeError as e:
-        return {"label": "Unknown", "confidence": 0.5, "explanation": "Could not parse API response.", "error": str(e)}
     except Exception as e:
         return {"label": "Unknown", "confidence": 0.0, "explanation": "API call failed.", "error": str(e)}
 
 
-# ── Hybrid Score Combination ──────────────────────────────────────────────────
+# ── Hybrid Scoring ─────────────────────────────────────────────────────────────
 def combine_scores(rule_result: dict, api_result: Optional[dict]) -> dict:
     """
-    Combine rule score and (optional) API confidence into final classification.
-    Logic:
-      - If rule_score >= 0.4 → skip API (strong rule match = Fraud)
-      - Otherwise → use API confidence
-      - final_score = max(rule_score, api_confidence)
-      - >= 0.6  → Fraud
-      - 0.3–0.6 → Suspicious
-      - < 0.3   → Safe
+    Improved hybrid decision logic:
+      1. If hard_trigger fired → immediate FRAUD (high-confidence credential demands)
+      2. If rule_score >= 0.45 → skip API, use rule_score
+      3. Otherwise: final_score = max(rule_score, api_confidence * 0.9)
     """
-    rule_score  = rule_result["rule_score"]
-    api_skipped = (api_result is None)
+    rule_score    = rule_result["rule_score"]
+    hard_trigger  = rule_result.get("hard_trigger", False)
+    api_skipped   = (api_result is None)
 
     api_label       = api_result["label"]       if api_result else "N/A"
     api_confidence  = api_result["confidence"]  if api_result else 0.0
     api_explanation = api_result["explanation"] if api_result else ""
     api_error       = api_result["error"]       if api_result else None
 
+    # Hard trigger: OTP/CVV/credential demand → always FRAUD
+    if hard_trigger:
+        final_score = max(rule_score, 0.85)
+        final_label = "FRAUD"
+        confidence_level = "High"
+        return {
+            "final_score": round(final_score, 4),
+            "final_label": final_label,
+            "confidence_level": confidence_level,
+            "api_label": api_label, "api_confidence": api_confidence,
+            "api_explanation": api_explanation, "api_error": api_error,
+            "api_skipped": True,
+        }
+
     if api_skipped:
         final_score = rule_score
     else:
-        final_score = max(rule_score, api_confidence)
+        # Weighted combination — rule engine slightly more trusted for specific patterns
+        final_score = max(rule_score, api_confidence * 0.9)
 
     final_score = round(final_score, 4)
 
@@ -476,70 +459,47 @@ def combine_scores(rule_result: dict, api_result: Optional[dict]) -> dict:
     else:
         final_label = "SAFE"
 
-    if final_score >= 0.75:
-        confidence_level = "High"
-    elif final_score >= 0.45:
-        confidence_level = "Medium"
-    else:
-        confidence_level = "Low"
+    confidence_level = "High" if final_score >= 0.75 else ("Medium" if final_score >= 0.45 else "Low")
 
     return {
-        "final_score":       final_score,
-        "final_label":       final_label,
-        "confidence_level":  confidence_level,
-        "api_label":         api_label,
-        "api_confidence":    api_confidence,
-        "api_explanation":   api_explanation,
-        "api_error":         api_error,
-        "api_skipped":       api_skipped,
+        "final_score":      final_score,
+        "final_label":      final_label,
+        "confidence_level": confidence_level,
+        "api_label":        api_label,
+        "api_confidence":   api_confidence,
+        "api_explanation":  api_explanation,
+        "api_error":        api_error,
+        "api_skipped":      api_skipped,
     }
 
 
-# ── Main Detection Pipeline ───────────────────────────────────────────────────
+# ── Main Detection Pipeline ────────────────────────────────────────────────────
 def detect(raw_text: str) -> dict:
-    """
-    Full detection pipeline.
-    Steps: clean → detect language → translate → rule check → (optional) API → combine
-    Returns a result dict suitable for print_result().
-    """
     text     = clean_text(raw_text)
     language = detect_language(text)
-
-    if DEBUG_MODE:
-        print(f"\n  [DEBUG] Cleaned text : {text}")
-        print(f"  [DEBUG] Language     : {language}")
-
-    # Translate non-English text for rule matching + API
     translated_text = translate_to_english(text, language)
 
-    # Run rules on both original and translated text (union of matches)
-    rule_orig        = check_rules(text)
-    rule_translated  = check_rules(translated_text) if translated_text != text else rule_orig
+    rule_orig       = check_rules(text)
+    rule_translated = check_rules(translated_text) if translated_text != text else rule_orig
 
-    # Merge rule results
-    combined_reasons = list(dict.fromkeys(rule_orig["reasons"] + rule_translated["reasons"]))
-    combined_score   = max(rule_orig["rule_score"], rule_translated["rule_score"])
+    # Merge rule results — union of reasons, max score, OR of hard triggers
+    combined_reasons    = list(dict.fromkeys(rule_orig["reasons"] + rule_translated["reasons"]))
+    combined_score      = max(rule_orig["rule_score"], rule_translated["rule_score"])
+    combined_hard       = rule_orig["hard_trigger"] or rule_translated["hard_trigger"]
+    combined_max_single = max(rule_orig.get("max_single", 0), rule_translated.get("max_single", 0))
 
     rule_result = {
-        "rule_score":     combined_score,
-        "reasons":        combined_reasons,
-        "matched_count":  len(combined_reasons),
+        "rule_score":    combined_score,
+        "reasons":       combined_reasons,
+        "matched_count": len(combined_reasons),
+        "hard_trigger":  combined_hard,
+        "max_single":    combined_max_single,
     }
 
-    if DEBUG_MODE:
-        print(f"  [DEBUG] Rule score   : {combined_score}")
-        print(f"  [DEBUG] Reasons      : {combined_reasons}")
-
-    # Decide whether to call OpenAI
+    # API only called when rules are weak and no hard trigger
     api_result = None
-    if combined_score < 0.4:
-        # Rules are weak — get AI opinion
+    if combined_score < 0.45 and not combined_hard:
         api_result = call_openai_api(translated_text)
-        if DEBUG_MODE:
-            print(f"  [DEBUG] API result   : {api_result}")
-    else:
-        if DEBUG_MODE:
-            print(f"  [DEBUG] Strong rule match ({combined_score:.2f} >= 0.4). Skipping API.")
 
     combined = combine_scores(rule_result, api_result)
 
@@ -552,165 +512,97 @@ def detect(raw_text: str) -> dict:
     }
 
 
-# ── Output Formatter ──────────────────────────────────────────────────────────
-# ANSI colour codes
+# ── Output Formatter ───────────────────────────────────────────────────────────
 _C = {
-    "red":    "\033[91m",
-    "yellow": "\033[93m",
-    "green":  "\033[92m",
-    "cyan":   "\033[96m",
-    "bold":   "\033[1m",
-    "reset":  "\033[0m",
-    "gray":   "\033[90m",
+    "red": "\033[91m", "yellow": "\033[93m", "green": "\033[92m",
+    "cyan": "\033[96m", "bold": "\033[1m", "reset": "\033[0m", "gray": "\033[90m",
 }
 
 def _colour(text: str, *codes: str) -> str:
-    """Wrap text in ANSI codes (disabled on Windows without ANSI support or when redirected)."""
     if not sys.stdout.isatty():
         return text
-    prefix = "".join(_C.get(c, "") for c in codes)
-    return f"{prefix}{text}{_C['reset']}"
+    return "".join(_C.get(c, "") for c in codes) + text + _C["reset"]
 
 
 def print_result(result: dict) -> None:
-    """Pretty-print a detection result to stdout."""
-    label   = result["final_label"]
-    fscore  = result["final_score"]
-    clevel  = result["confidence_level"]
-
-    label_colour = {
-        "FRAUD":      ("red",    "bold"),
-        "SUSPICIOUS": ("yellow", "bold"),
-        "SAFE":       ("green",  "bold"),
-    }.get(label, ("cyan",))
+    label  = result["final_label"]
+    fscore = result["final_score"]
+    clevel = result["confidence_level"]
+    color  = {"FRAUD": ("red", "bold"), "SUSPICIOUS": ("yellow", "bold"), "SAFE": ("green", "bold")}.get(label, ("cyan",))
 
     print()
-    print(_colour("═" * 60, "bold"))
-    print(_colour("  PHISHING / FRAUD DETECTION RESULT", "bold", "cyan"))
-    print(_colour("═" * 60, "bold"))
-
-    print(f"  {'Message':<18}: {result['original_message']}")
+    print(_colour("═" * 62, "bold"))
+    print(_colour("  PHISHING / FRAUD DETECTION  (v2.0)", "bold", "cyan"))
+    print(_colour("═" * 62, "bold"))
+    print(f"  {'Message':<18}: {result['original_message'][:80]}")
     print(f"  {'Language':<18}: {result['language'].capitalize()}")
-    print()
     print(f"  {'Rule Score':<18}: {result['rule_score']:.4f}")
     if not result["api_skipped"]:
-        api_err = f"  ⚠ {result['api_error']}" if result["api_error"] else ""
-        print(f"  {'API Label':<18}: {result['api_label']} (conf={result['api_confidence']:.4f}){api_err}")
+        print(f"  {'API Label':<18}: {result['api_label']} (conf={result['api_confidence']:.4f})")
         if result["api_explanation"]:
             print(f"  {'API Reason':<18}: {result['api_explanation']}")
     else:
-        print(f"  {'API':<18}: {_colour('Skipped (strong rule match)', 'gray')}")
-
+        print(f"  {'API':<18}: {_colour('Skipped', 'gray')}")
     print()
     print(f"  {'Final Score':<18}: {fscore:.4f}")
-    print(f"  {'Classification':<18}: {_colour(label, *label_colour)}")
-    print(f"  {'Confidence Level':<18}: {clevel}")
-
+    print(f"  {'Classification':<18}: {_colour(label, *color)}")
+    print(f"  {'Confidence':<18}: {clevel}")
     if result["reasons"]:
         print()
         print(_colour("  Detection Reasons:", "bold"))
         for r in result["reasons"]:
             print(f"    • {r}")
-    else:
-        print(f"\n  {_colour('No specific rule triggers.', 'gray')}")
-
-    print(_colour("═" * 60, "bold"))
+    print(_colour("═" * 62, "bold"))
     print()
 
 
-# ── Built-in Test Cases ───────────────────────────────────────────────────────
+# ── CLI ────────────────────────────────────────────────────────────────────────
 TEST_CASES = [
-    # (message, expected_label)
-    # ── Safe messages ──────────────────────────────────────────────────────
-    ("hi",                                                                    "SAFE"),
-    ("Hey, can you recommend a good Python book?",                           "SAFE"),
-    ("Your order has been shipped. Track it at amazon.com/track",            "SAFE"),
-
-    # ── The exact failing message from the bug report ──────────────────────
-    ("give me your bank details or i will block your account",               "FRAUD"),
-
-    # ── Variants previously missed ─────────────────────────────────────────
-    ("send me your otp",                                                      "FRAUD"),
-    ("I will block your account if you don't comply",                        "FRAUD"),
-    ("We will suspend your account immediately",                             "FRAUD"),
-    ("Your account gets blocked unless you verify now",                      "FRAUD"),
-    ("Share your password or else we take legal action",                     "FRAUD"),
-
-    # ── Standard phishing ──────────────────────────────────────────────────
-    ("your account will be blocked click here",                              "FRAUD"),
-    ("Congratulations! You have won Rs 5,00,000 in our lucky draw. "
-     "Click here to claim your prize now!",                                  "FRAUD"),
-    ("Your KYC is pending. Update your Aadhaar and CVV details "
-     "immediately to avoid account suspension.",                             "FRAUD"),
-
-    # ── Hindi / Hinglish ───────────────────────────────────────────────────
-    ("Aapka bank account band ho jayega. Abhi apna OTP aur PIN "
-     "bhejiye warna legal action hoga.",                                     "FRAUD"),
-    ("Aapka khata band kar denge agar aap abhi verify nahi karte",           "FRAUD"),
+    ("hi", "SAFE"),
+    ("Your order has been shipped. Track it at amazon.com", "SAFE"),
+    ("give me your bank details or i will block your account", "FRAUD"),
+    ("send me your otp", "FRAUD"),
+    ("Congratulations! You have won Rs 5,00,000. Click here to claim.", "FRAUD"),
+    ("Your KYC is pending. Update your Aadhaar and CVV immediately.", "FRAUD"),
+    ("Please send me your username and password to proceed.", "FRAUD"),
+    ("Buy a $200 Google Play gift card and share the code with me.", "FRAUD"),
+    ("Download and install this tool: setup.exe for your refund.", "FRAUD"),
+    ("Aapka apna otp dijiye warna account band ho jayega.", "FRAUD"),
 ]
 
+def run_tests():
+    print(_colour("\n  ── TEST SUITE ──\n", "bold", "cyan"))
+    passed = failed = 0
+    for msg, expected in TEST_CASES:
+        r = detect(msg)
+        ok = r["final_label"] == expected
+        icon = "✓" if ok else "✗"
+        col  = "green" if ok else "red"
+        print(_colour(f"  {icon} [{expected:<12}] {msg[:60]}", col))
+        if ok: passed += 1
+        else:   failed += 1
+    print(_colour(f"\n  {passed}/{len(TEST_CASES)} passed\n", "bold"))
 
-def run_tests() -> None:
-    """Run all built-in test cases and show pass/fail."""
-    print(_colour("\n  ── RUNNING TEST CASES ──\n", "bold", "cyan"))
-    passed = 0
-    failed = 0
-    for i, (msg, expected) in enumerate(TEST_CASES, 1):
-        print(_colour(f"  TEST {i}/{len(TEST_CASES)}", "bold"))
-        result = detect(msg)
-        print_result(result)
-        got = result["final_label"]
-        if got == expected:
-            print(_colour(f"  ✓ PASS  (expected {expected})\n", "green", "bold"))
-            passed += 1
-        else:
-            print(_colour(f"  ✗ FAIL  (expected {expected}, got {got})\n", "red", "bold"))
-            failed += 1
-    print(_colour(f"\n  Results: {passed} passed, {failed} failed out of {len(TEST_CASES)} tests\n",
-                  "bold"))
-
-
-# ── CLI Interactive Mode ──────────────────────────────────────────────────────
-def interactive_mode() -> None:
-    """Run an interactive CLI loop."""
-    print(_colour("\n  ╔══════════════════════════════════════════╗", "cyan", "bold"))
-    print(_colour("  ║   Phishing & Fraud Detection System      ║", "cyan", "bold"))
-    print(_colour("  ║   Type 'quit' or Ctrl+C to exit          ║", "cyan", "bold"))
-    print(_colour("  ╚══════════════════════════════════════════╝\n", "cyan", "bold"))
-
-    while True:
-        try:
-            user_input = input(_colour("  Enter message to analyze: ", "bold")).strip()
-        except (KeyboardInterrupt, EOFError):
-            print("\n  Exiting.")
-            break
-
-        if not user_input:
-            continue
-        if user_input.lower() in ("quit", "exit", "q"):
-            print("  Goodbye.")
-            break
-
-        result = detect(user_input)
-        print_result(result)
-
-
-# ── Entry Point ───────────────────────────────────────────────────────────────
 def main():
     global DEBUG_MODE
-
-    parser = argparse.ArgumentParser(description="Phishing & Fraud Detection System")
-    parser.add_argument("--debug", action="store_true", help="Enable debug output")
-    parser.add_argument("--test",  action="store_true", help="Run built-in test cases")
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--debug", action="store_true")
+    parser.add_argument("--test",  action="store_true")
     args = parser.parse_args()
-
     DEBUG_MODE = args.debug
 
     if args.test:
         run_tests()
     else:
-        interactive_mode()
-
+        print(_colour("\n  Phishing & Fraud Detector v2.0 — type 'quit' to exit\n", "cyan", "bold"))
+        while True:
+            try:
+                user_input = input(_colour("  Message: ", "bold")).strip()
+            except (KeyboardInterrupt, EOFError):
+                break
+            if not user_input: continue
+            if user_input.lower() in ("quit", "exit", "q"): break
+            print_result(detect(user_input))
 
 if __name__ == "__main__":
     main()

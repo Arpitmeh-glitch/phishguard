@@ -42,7 +42,7 @@ from slowapi.errors import RateLimitExceeded
 
 from app.config import settings
 from app.database import engine, Base
-from app.routes import auth, scan, user, admin
+from app.routes import auth, scan, user, admin, threat
 from app.services import url_service
 from app.utils.seed import seed_demo_accounts
 from app.utils.security_headers import SecurityHeadersMiddleware
@@ -124,10 +124,11 @@ app.add_middleware(
 # ── Routes ────────────────────────────────────────────────────────────────────
 # auth.router has prefix="/auth", so the full login path resolves to:
 #   POST /api/v1/auth/login  ✓
-app.include_router(auth.router,  prefix="/api/v1")
-app.include_router(scan.router,  prefix="/api/v1")
-app.include_router(user.router,  prefix="/api/v1")
-app.include_router(admin.router, prefix="/api/v1")
+app.include_router(auth.router,   prefix="/api/v1")
+app.include_router(scan.router,   prefix="/api/v1")
+app.include_router(user.router,   prefix="/api/v1")
+app.include_router(admin.router,  prefix="/api/v1")
+app.include_router(threat.router, prefix="/api/v1")
 
 
 @app.get("/api/health")

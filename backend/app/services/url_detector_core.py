@@ -1,24 +1,35 @@
 """
-URL Phishing Detector — Production Version
-==========================================
-Changes from original:
-  1. Model is trained ONCE and saved to model.pkl
-  2. On subsequent runs, model is loaded from disk (no retraining)
-  3. predict_url() now returns structured JSON dict instead of a string
-  4. Training is triggered by calling load_or_train_model()
-  5. [v2.1] Fallback explanations generated when model flags PHISHING but
-     no explicit rule triggers fired — eliminates the "PHISHING + empty reasons"
-     contradiction.  ML feature importances used to build context-aware text.
+URL Phishing Detector — v3.0 (Improved)
+=========================================
+Improvements over v2.x:
+  1. Extended feature set (23 features vs 9):
+     - Domain entropy calculation
+     - Suspicious TLD detection
+     - Subdomain count
+     - URL shortener detection
+     - Suspicious query param detection
+     - Special char ratios
+     - Brand impersonation keywords
+     - Path depth
+     - Digit ratio in domain
+     - Double slash in path
+  2. RandomForest with tuned hyperparameters (n_estimators=200, max_depth=20)
+  3. Improved hybrid scoring: ML probability + rule trigger count combined
+  4. More granular risk tiers: SAFE / SUSPICIOUS / PHISHING
+  5. Deletion of stale model.pkl forced when feature count changes
 """
 
+import math
 import pandas as pd
 import re
 import os
 import pickle
 import logging
+import hashlib
 
+from urllib.parse import urlparse, parse_qs
 from sklearn.model_selection import train_test_split
-from sklearn.ensemble import RandomForestClassifier
+from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
 from sklearn.metrics import accuracy_score, classification_report
 
 logger = logging.getLogger(__name__)
@@ -28,63 +39,230 @@ BASE_DIR   = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR   = os.path.join(BASE_DIR, "data")
 MODEL_PATH = os.path.join(BASE_DIR, "model.pkl")
 
-# ── Feature Extraction (unchanged logic) ──────────────────────────────────────
+# ── Constants ──────────────────────────────────────────────────────────────────
+FEATURE_COUNT = 23   # bump this when adding features to force retraining
+
+# Known URL shorteners
+URL_SHORTENERS = {
+    "bit.ly", "tinyurl.com", "t.co", "goo.gl", "ow.ly", "is.gd",
+    "buff.ly", "adf.ly", "short.link", "cutt.ly", "rb.gy", "shorturl.at",
+    "tiny.cc", "shorte.st", "bc.vc", "clk.sh", "0rz.tw",
+}
+
+# Suspicious TLDs commonly abused in phishing
+SUSPICIOUS_TLDS = {
+    ".tk", ".ml", ".ga", ".cf", ".gq", ".xyz", ".top", ".club", ".work",
+    ".click", ".link", ".online", ".site", ".website", ".space", ".fun",
+    ".loan", ".win", ".download", ".accountant", ".review", ".country",
+    ".stream", ".gdn", ".bid", ".trade", ".cricket", ".science",
+}
+
+# Brand impersonation keywords
+BRAND_KEYWORDS = [
+    "paypal", "amazon", "apple", "microsoft", "google", "facebook",
+    "instagram", "netflix", "dropbox", "linkedin", "twitter", "ebay",
+    "wellsfargo", "chase", "bankofamerica", "citibank", "barclays",
+    "sbi", "hdfc", "icici", "kotak", "paytm", "phonepe", "gpay",
+    "whatsapp", "telegram", "yahoo", "outlook", "office365",
+]
+
+# Suspicious query parameter names
+SUSPICIOUS_PARAMS = {
+    "redirect", "redir", "url", "next", "goto", "dest", "destination",
+    "return", "returnurl", "returnto", "target", "forward", "link",
+    "ref", "referer", "checkout", "payment",
+}
+
+# Sensitive path keywords
+SENSITIVE_PATH_WORDS = [
+    "login", "signin", "sign-in", "logon", "log-in",
+    "verify", "verification", "validate", "validation",
+    "account", "update", "confirm", "secure", "security",
+    "bank", "password", "passwd", "credential", "auth",
+    "wallet", "payment", "checkout", "billing",
+]
+
+
+# ── Feature Extraction ─────────────────────────────────────────────────────────
+def _shannon_entropy(s: str) -> float:
+    """Shannon entropy of a string — high entropy = random-looking domain."""
+    if not s:
+        return 0.0
+    freq = {}
+    for c in s:
+        freq[c] = freq.get(c, 0) + 1
+    length = len(s)
+    return -sum((v / length) * math.log2(v / length) for v in freq.values())
+
+
 def extract_features_with_reasons(url: str):
+    """
+    Extract 23 numerical features + human-readable rule reasons from a URL.
+    Returns: (features: list[float], reasons: list[str])
+    """
     features = []
     reasons  = []
+    url_lower = url.lower().strip()
 
-    # Length
-    features.append(len(url))
-    if len(url) > 75:
-        reasons.append("URL is unusually long")
+    try:
+        parsed = urlparse(url_lower if url_lower.startswith("http") else "http://" + url_lower)
+        domain   = parsed.netloc or ""
+        path     = parsed.path or ""
+        query    = parsed.query or ""
+        hostname = domain.split(":")[0]   # strip port
+    except Exception:
+        parsed = None
+        domain = hostname = path = query = ""
 
-    # Dots
+    # ── 1. URL total length ────────────────────────────────────────────────────
+    url_len = len(url)
+    features.append(url_len)
+    if url_len > 75:
+        reasons.append(f"URL is unusually long ({url_len} chars)")
+
+    # ── 2. Dot count ──────────────────────────────────────────────────────────
     dot_count = url.count(".")
     features.append(dot_count)
-    if dot_count > 3:
-        reasons.append("Too many dots in URL")
+    if dot_count > 4:
+        reasons.append(f"Excessive dot count ({dot_count}) — subdomain abuse pattern")
 
-    # Hyphens
-    features.append(url.count("-"))
+    # ── 3. Hyphen count ───────────────────────────────────────────────────────
+    hyphen_count = hostname.count("-")
+    features.append(hyphen_count)
+    if hyphen_count > 2:
+        reasons.append(f"Many hyphens ({hyphen_count}) in domain — brand-spoofing indicator")
 
-    # Slashes
-    features.append(url.count("/"))
+    # ── 4. Slash count ────────────────────────────────────────────────────────
+    slash_count = url.count("/")
+    features.append(slash_count)
 
-    # @ symbol
+    # ── 5. @ symbol ───────────────────────────────────────────────────────────
     has_at = "@" in url
     features.append(1 if has_at else 0)
     if has_at:
-        reasons.append("Contains '@' symbol (suspicious)")
+        reasons.append("Contains '@' — hides real destination after @")
 
-    # IP address
-    has_ip = bool(re.search(r"\d+\.\d+\.\d+\.\d+", url))
+    # ── 6. IP address as hostname ─────────────────────────────────────────────
+    has_ip = bool(re.search(r"(?<!\d)(\d{1,3}\.){3}\d{1,3}(?!\d)", hostname))
     features.append(1 if has_ip else 0)
     if has_ip:
-        reasons.append("Uses IP address instead of domain")
+        reasons.append("Uses raw IP address instead of a domain name")
 
-    # HTTPS
-    is_https = url.startswith("https")
+    # ── 7. HTTPS ──────────────────────────────────────────────────────────────
+    is_https = url_lower.startswith("https")
     features.append(1 if is_https else 0)
     if not is_https:
-        reasons.append("Not using HTTPS")
+        reasons.append("Not using HTTPS — unencrypted connection")
 
-    # Suspicious words
-    suspicious_words = ["login", "verify", "update", "secure", "account", "bank"]
-    found_words = [w for w in suspicious_words if w in url.lower()]
-    features.append(1 if found_words else 0)
-    if found_words:
-        reasons.append(f"Contains suspicious words: {', '.join(found_words)}")
+    # ── 8. Suspicious words in URL ────────────────────────────────────────────
+    found_sensitive = [w for w in SENSITIVE_PATH_WORDS if w in url_lower]
+    features.append(len(found_sensitive))
+    if found_sensitive:
+        reasons.append(f"Sensitive keywords in URL: {', '.join(found_sensitive[:4])}")
 
-    # Length category flag
-    features.append(1 if len(url) > 75 else 0)
+    # ── 9. Long URL flag (binary) ─────────────────────────────────────────────
+    features.append(1 if url_len > 75 else 0)
 
+    # ── 10. Subdomain count ───────────────────────────────────────────────────
+    parts = hostname.split(".")
+    subdomain_count = max(0, len(parts) - 2)
+    features.append(subdomain_count)
+    if subdomain_count > 2:
+        reasons.append(f"Excessive subdomains ({subdomain_count}) — common in phishing URLs")
+
+    # ── 11. Domain entropy ────────────────────────────────────────────────────
+    apex = ".".join(parts[-2:]) if len(parts) >= 2 else hostname
+    apex_name = apex.split(".")[0]
+    entropy = round(_shannon_entropy(apex_name), 4)
+    features.append(entropy)
+    if entropy > 3.8:
+        reasons.append(f"High domain entropy ({entropy:.2f}) — likely randomly generated domain")
+
+    # ── 12. Suspicious TLD ────────────────────────────────────────────────────
+    tld = "." + parts[-1] if parts else ""
+    is_suspicious_tld = tld in SUSPICIOUS_TLDS
+    features.append(1 if is_suspicious_tld else 0)
+    if is_suspicious_tld:
+        reasons.append(f"Suspicious TLD '{tld}' — frequently abused in phishing campaigns")
+
+    # ── 13. URL shortener ─────────────────────────────────────────────────────
+    is_shortener = any(s in hostname for s in URL_SHORTENERS)
+    features.append(1 if is_shortener else 0)
+    if is_shortener:
+        reasons.append("URL shortener detected — masks true destination")
+
+    # ── 14. Brand keyword impersonation ───────────────────────────────────────
+    found_brands = [b for b in BRAND_KEYWORDS if b in url_lower]
+    brand_not_in_apex = found_brands and not any(b in apex for b in found_brands)
+    features.append(1 if brand_not_in_apex else 0)
+    if brand_not_in_apex:
+        reasons.append(f"Brand keyword(s) '{', '.join(found_brands[:2])}' in path/subdomain — impersonation attempt")
+
+    # ── 15. Digit ratio in domain ─────────────────────────────────────────────
+    digit_ratio = sum(c.isdigit() for c in hostname) / max(len(hostname), 1)
+    features.append(round(digit_ratio, 4))
+    if digit_ratio > 0.3:
+        reasons.append(f"High digit ratio ({digit_ratio:.0%}) in domain — auto-generated domain pattern")
+
+    # ── 16. Special char ratio in URL ─────────────────────────────────────────
+    special_chars = sum(1 for c in url if c in "%=&?#~_;,")
+    special_ratio = special_chars / max(len(url), 1)
+    features.append(round(special_ratio, 4))
+    if special_ratio > 0.15:
+        reasons.append(f"High special-character ratio ({special_ratio:.0%}) — encoded/obfuscated URL")
+
+    # ── 17. Suspicious query parameters ──────────────────────────────────────
+    try:
+        qparams = set(parse_qs(query).keys())
+        has_suspicious_params = bool(qparams & SUSPICIOUS_PARAMS)
+    except Exception:
+        has_suspicious_params = False
+    features.append(1 if has_suspicious_params else 0)
+    if has_suspicious_params:
+        reasons.append("Suspicious redirect/forwarding query parameters detected")
+
+    # ── 18. Path depth ────────────────────────────────────────────────────────
+    path_depth = len([p for p in path.split("/") if p])
+    features.append(path_depth)
+
+    # ── 19. Double slash in path (//url= tricks) ─────────────────────────────
+    has_double_slash = "//" in path
+    features.append(1 if has_double_slash else 0)
+    if has_double_slash:
+        reasons.append("Double slash in path — open redirect indicator")
+
+    # ── 20. Punycode / IDN homograph ─────────────────────────────────────────
+    has_punycode = "xn--" in hostname
+    features.append(1 if has_punycode else 0)
+    if has_punycode:
+        reasons.append("Punycode (IDN homograph) detected — visually spoofs trusted domain")
+
+    # ── 21. Port in URL ───────────────────────────────────────────────────────
+    has_non_std_port = bool(re.search(r":\d{2,5}", domain)) and not domain.endswith(":80") and not domain.endswith(":443")
+    features.append(1 if has_non_std_port else 0)
+    if has_non_std_port:
+        reasons.append("Non-standard port in URL — atypical for legitimate sites")
+
+    # ── 22. Repeated URL keyword (url= in path) ───────────────────────────────
+    has_url_in_path = "url=" in url_lower or "http" in path
+    features.append(1 if has_url_in_path else 0)
+    if has_url_in_path:
+        reasons.append("Embedded URL/redirect in path — redirect-chain phishing pattern")
+
+    # ── 23. TLD in path (e.g. .com appearing mid-path) ───────────────────────
+    tld_in_path = bool(re.search(r"\.(com|net|org|info|co|io)/", path))
+    features.append(1 if tld_in_path else 0)
+    if tld_in_path:
+        reasons.append("TLD token appearing mid-path — domain-confusion technique")
+
+    assert len(features) == FEATURE_COUNT, f"Feature count mismatch: got {len(features)}, expected {FEATURE_COUNT}"
     return features, reasons
 
 
-# ── Dataset Loading & Training ────────────────────────────────────────────────
+# ── Dataset Loading & Training ─────────────────────────────────────────────────
 def _load_and_train() -> RandomForestClassifier:
-    """Load CSVs, balance dataset, train RandomForest, return model."""
-    logger.info("🔧 Training URL detection model from datasets…")
+    """Load CSVs, balance dataset, train improved RandomForest, return model."""
+    logger.info("🔧 Training improved URL detection model (v3.0) from datasets…")
 
     df1_path = os.path.join(DATA_DIR, "dataset_link_phishing.csv")
     df3_path = os.path.join(DATA_DIR, "phishing_url_dataset_unique.csv")
@@ -92,8 +270,8 @@ def _load_and_train() -> RandomForestClassifier:
     dfs = []
 
     if os.path.exists(df1_path):
-        df1 = pd.read_csv(df1_path)[["url", "status"]]
-        df1["label"] = df1["status"].apply(lambda x: 1 if x == "phishing" else 0)
+        df1 = pd.read_csv(df1_path, low_memory=False)[["url", "status"]]
+        df1["label"] = df1["status"].apply(lambda x: 1 if str(x).strip().lower() == "phishing" else 0)
         dfs.append(df1[["url", "label"]])
         logger.info(f"   Loaded df1: {len(df1)} rows")
     else:
@@ -107,11 +285,9 @@ def _load_and_train() -> RandomForestClassifier:
         logger.warning(f"   ⚠ Dataset not found: {df3_path}")
 
     if not dfs:
-        raise FileNotFoundError(
-            "No training datasets found. Place CSVs in backend/data/."
-        )
+        raise FileNotFoundError("No training datasets found. Place CSVs in backend/data/.")
 
-    df = pd.concat(dfs).drop_duplicates().dropna()
+    df = pd.concat(dfs).drop_duplicates(subset=["url"]).dropna()
     df["url"] = df["url"].str.strip().str.lower()
     logger.info(f"   Combined dataset: {df.shape[0]} rows")
 
@@ -121,35 +297,57 @@ def _load_and_train() -> RandomForestClassifier:
     df    = pd.concat([phish, safe]).sample(frac=1, random_state=42).reset_index(drop=True)
     logger.info(f"   Balanced dataset: {df.shape[0]} rows ({len(phish)} each class)")
 
+    logger.info("   Extracting features (this may take a moment)…")
     X = df["url"].apply(lambda u: extract_features_with_reasons(u)[0]).tolist()
     y = df["label"]
 
     X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.3, random_state=42
+        X, y, test_size=0.25, random_state=42, stratify=y
     )
 
-    model = RandomForestClassifier(n_estimators=100, random_state=42, n_jobs=-1)
+    # Tuned RandomForest: more trees, depth-limited to reduce overfitting
+    model = RandomForestClassifier(
+        n_estimators=200,
+        max_depth=20,
+        min_samples_leaf=3,
+        max_features="sqrt",
+        random_state=42,
+        n_jobs=-1,
+        class_weight="balanced",
+    )
     model.fit(X_train, y_train)
 
-    pred = model.predict(X_test)
-    acc  = accuracy_score(y_test, pred)
+    pred  = model.predict(X_test)
+    acc   = accuracy_score(y_test, pred)
     logger.info(f"   ✅ Model trained — accuracy: {acc:.4f}")
     logger.info("\n" + classification_report(y_test, pred))
+
+    # Attach metadata so stale model detection works
+    model._phishguard_feature_count = FEATURE_COUNT
 
     return model
 
 
 def load_or_train_model() -> RandomForestClassifier:
     """
-    Load model from model.pkl if it exists; otherwise train and save it.
-    Call this ONCE at application startup.
+    Load model.pkl if it exists AND was built with the current feature count.
+    Otherwise retrain and save.
     """
     if os.path.exists(MODEL_PATH):
-        logger.info(f"📦 Loading pre-trained model from {MODEL_PATH}")
-        with open(MODEL_PATH, "rb") as f:
-            model = pickle.load(f)
-        logger.info("   ✅ Model loaded successfully")
-        return model
+        try:
+            with open(MODEL_PATH, "rb") as f:
+                model = pickle.load(f)
+            # Validate feature count compatibility
+            if getattr(model, "_phishguard_feature_count", None) == FEATURE_COUNT:
+                logger.info(f"📦 Loaded pre-trained model from {MODEL_PATH}")
+                return model
+            else:
+                logger.warning("⚠ Stale model (feature count mismatch) — retraining…")
+                os.remove(MODEL_PATH)
+        except Exception as e:
+            logger.warning(f"⚠ Could not load model ({e}) — retraining…")
+            if os.path.exists(MODEL_PATH):
+                os.remove(MODEL_PATH)
 
     model = _load_and_train()
     with open(MODEL_PATH, "wb") as f:
@@ -158,114 +356,94 @@ def load_or_train_model() -> RandomForestClassifier:
     return model
 
 
-# ── Module-level model reference (set by FastAPI on startup) ──────────────────
+# ── Module-level model reference ──────────────────────────────────────────────
 _model: RandomForestClassifier | None = None
 
 
 def set_model(model: RandomForestClassifier) -> None:
-    """Inject the trained model into this module (called from main.py startup)."""
     global _model
     _model = model
 
 
-# ── Feature metadata (mirrors extract_features_with_reasons order) ────────────
-# Each entry: (feature_name, high_value_description, low_value_description)
-# Used to generate human-readable ML explanations from feature importances.
+# ── Feature metadata for human-readable ML explanations ─────────────────────
 _FEATURE_META = [
-    ("url_length",        "URL is unusually long ({val} characters)",                   None),
-    ("dot_count",         "Elevated dot count ({val}) — common in subdomain abuse",      None),
-    ("hyphen_count",      "Contains {val} hyphen(s) — often used to mimic trusted domains", None),
-    ("slash_count",       "Deep path structure ({val} slashes) — typical of redirect chains", None),
-    ("has_at_symbol",     "Contains '@' symbol — used to disguise the real destination", None),
-    ("has_ip_address",    "Uses a raw IP address instead of a domain name",              None),
-    ("is_not_https",      "Connection is not secured with HTTPS",                        None),
-    ("has_suspicious_words", "URL contains words associated with credential harvesting", None),
-    ("long_url_flag",     "URL length exceeds safe threshold (75 characters)",           None),
+    (0,  lambda url, f: f"URL length ({int(f[0])} chars) is in the range associated with phishing"),
+    (1,  lambda url, f: f"Dot count ({int(f[1])}) matches subdomain-abuse phishing patterns"),
+    (2,  lambda url, f: f"Hyphen density ({int(f[2])}) is characteristic of domain-spoofing attacks"),
+    (3,  lambda url, f: f"Deep path structure ({int(f[3])} slashes) typical of redirect-chain phishing"),
+    (5,  lambda url, f: "Raw IP address used as hostname — strong phishing indicator"),
+    (6,  lambda url, f: "Plain HTTP — phishing pages frequently skip HTTPS"),
+    (7,  lambda url, f: "Credential-harvesting vocabulary detected in URL tokens"),
+    (10, lambda url, f: f"Excessive subdomain nesting ({int(f[10])}) — free-subdomain phishing technique"),
+    (11, lambda url, f: f"High domain entropy ({f[11]:.2f}) — randomly generated domain"),
+    (12, lambda url, f: "Suspicious TLD associated with high phishing prevalence"),
+    (13, lambda url, f: "URL shortener — destination obfuscated"),
+    (14, lambda url, f: "Brand name found in subdomain/path rather than apex domain — impersonation"),
+    (15, lambda url, f: f"Digit-heavy domain ({f[15]:.0%} digits) — auto-generated hostname pattern"),
 ]
 
 
-def _ml_fallback_reasons(url: str, features: list[float], phishing_prob: float) -> list[str]:
-    """
-    Generate context-aware, human-readable explanations when the ML model
-    predicts PHISHING but no explicit rule triggered.
-
-    Strategy:
-      1. Use RandomForest feature_importances_ weighted by the actual feature
-         values to rank which features most influenced this prediction.
-      2. Build natural-language sentences for the top contributors.
-      3. Always append a generic ML-layer explanation as the final entry.
-    """
-    reasons: list[str] = []
-
-    # ── Step 1: rank features by importance × activation ──────────────────────
+def _ml_fallback_reasons(url: str, features: list, phishing_prob: float) -> list:
+    reasons = []
     importances = getattr(_model, "feature_importances_", None)
+
     if importances is not None and len(importances) == len(features):
-        # Weight importance by whether the feature is "on" (non-zero)
-        weighted = [(imp * (1 if fv > 0 else 0.1), idx)
+        weighted = [(imp * (abs(fv) + 0.01), idx)
                     for idx, (imp, fv) in enumerate(zip(importances, features))]
         weighted.sort(reverse=True)
-        top_indices = [idx for _, idx in weighted[:4] if weighted[0][0] > 0]
+        top_indices = {idx for _, idx in weighted[:5]}
     else:
-        top_indices = []
+        top_indices = set(range(len(features)))
 
-    # ── Step 2: contextual sentences for each top feature ────────────────────
-    url_len     = len(url)
-    dot_count   = url.count(".")
-    hyphen_cnt  = url.count("-")
-    slash_cnt   = url.count("/")
+    for feat_idx, desc_fn in _FEATURE_META:
+        if feat_idx in top_indices and features[feat_idx] > 0:
+            try:
+                reasons.append(desc_fn(url, features))
+            except Exception:
+                pass
 
-    feature_sentences = {
-        0: f"URL length ({url_len} chars) is statistically associated with phishing pages",
-        1: f"Dot count ({dot_count}) matches patterns seen in subdomain-based phishing",
-        2: f"Hyphen usage ({hyphen_cnt}) is characteristic of domain-spoofing attacks",
-        3: f"Deep path depth ({slash_cnt} slashes) is typical in redirect-chain phishing",
-        4: "Structural token patterns align with known phishing URL fingerprints",
-        5: "Domain lacks a human-readable name — raw IPs are a strong phishing indicator",
-        6: "Plain HTTP protocol detected — phishing pages frequently skip HTTPS",
-        7: "Lexical analysis flagged credential-harvesting vocabulary in the URL",
-        8: "URL length exceeds the safe threshold used in model training",
-    }
-
-    for idx in top_indices:
-        sentence = feature_sentences.get(idx)
-        if sentence:
-            reasons.append(sentence)
-
-    # ── Step 3: always add the ML-layer explanation ───────────────────────────
     confidence_pct = round(phishing_prob * 100, 1)
     reasons.append(
-        f"Machine learning model flagged this URL with {confidence_pct}% phishing probability "
-        f"based on learned statistical patterns across thousands of known phishing URLs"
+        f"ML model flagged this URL with {confidence_pct}% phishing probability "
+        f"based on statistical patterns across ~68,000 known URLs"
     )
 
-    # Deduplicate while preserving order
-    seen: set[str] = set()
-    unique: list[str] = []
+    # Deduplicate
+    seen, unique = set(), []
     for r in reasons:
         if r not in seen:
             seen.add(r)
             unique.append(r)
-
     return unique
 
 
-# ── Prediction (JSON output) ──────────────────────────────────────────────────
+# ── Rule-based scoring overlay ────────────────────────────────────────────────
+def _rule_score(reasons: list) -> float:
+    """
+    Convert reason count to a 0-1 additive score that boosts ML probability.
+    Each triggered reason adds weight; soft-capped via exponential.
+    """
+    if not reasons:
+        return 0.0
+    raw = len(reasons) * 0.12
+    return round(1.0 - math.exp(-raw), 4)
+
+
+# ── Prediction ────────────────────────────────────────────────────────────────
 def predict_url(url: str) -> dict:
     """
     Predict whether a URL is phishing.
 
-    Returns:
-        {
-            "label":          "PHISHING" | "SAFE",
-            "confidence":     float (0–1),
-            "reasons":        list[str],   -- never empty for PHISHING
-            "detection_mode": "rule-based" | "ml-pattern" | "safe"
-        }
+    Hybrid scoring:
+        final_prob = (ml_prob * 0.65) + (rule_score * 0.35)
 
-    detection_mode values:
-      "rule-based"  — at least one explicit rule fired
-      "ml-pattern"  — model flagged it but no rule fired (fallback explanations used)
-      "safe"        — classified as SAFE
+    Classification thresholds:
+        >= 0.65 → PHISHING
+        0.35–0.65 → SUSPICIOUS
+        < 0.35 → SAFE
+
+    Returns:
+        label, confidence, risk_tier, reasons, detection_mode
     """
     if _model is None:
         raise RuntimeError("Model not initialised. Call set_model() first.")
@@ -273,33 +451,51 @@ def predict_url(url: str) -> dict:
     features, reasons = extract_features_with_reasons(url)
     proba = _model.predict_proba([features])[0]
 
-    phishing_prob = float(round(proba[1], 4))
-    safe_prob     = float(round(proba[0], 4))
+    ml_phishing_prob = float(proba[1])
+    ml_safe_prob     = float(proba[0])
 
-    label      = "PHISHING" if phishing_prob > 0.5 else "SAFE"
-    confidence = phishing_prob if label == "PHISHING" else safe_prob
+    # Rule-based overlay
+    rule_boost = _rule_score(reasons)
 
-    # ── Determine detection mode & ensure reasons are never empty for PHISHING ─
-    if label == "PHISHING":
-        if reasons:
-            detection_mode = "rule-based"
-        else:
-            # No rule fired — generate ML-derived fallback explanations
-            reasons = _ml_fallback_reasons(url, features, phishing_prob)
-            detection_mode = "ml-pattern"
+    # Hybrid score: weighted combination
+    final_prob = (ml_phishing_prob * 0.65) + (rule_boost * 0.35)
+    final_prob = round(min(final_prob, 1.0), 4)
+
+    # Classification
+    if final_prob >= 0.65:
+        label = "PHISHING"
+        risk_tier = "HIGH"
+        confidence = final_prob
+    elif final_prob >= 0.35:
+        label = "SUSPICIOUS"
+        risk_tier = "MEDIUM"
+        confidence = final_prob
     else:
-        # SAFE: reasons may legitimately be empty — that's fine
+        label = "SAFE"
+        risk_tier = "LOW"
+        confidence = round(ml_safe_prob, 4)
+
+    # Ensure PHISHING never has empty reasons
+    if label in ("PHISHING", "SUSPICIOUS") and not reasons:
+        reasons = _ml_fallback_reasons(url, features, ml_phishing_prob)
+        detection_mode = "ml-pattern"
+    elif reasons:
+        detection_mode = "rule-based"
+    else:
         detection_mode = "safe"
 
     return {
         "label":          label,
         "confidence":     confidence,
+        "risk_tier":      risk_tier,
+        "ml_probability": round(ml_phishing_prob, 4),
+        "rule_score":     rule_boost,
         "reasons":        reasons,
         "detection_mode": detection_mode,
     }
 
 
-# ── CLI entry point (for standalone testing) ──────────────────────────────────
+# ── CLI entry point ────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     mdl = load_or_train_model()
@@ -309,11 +505,11 @@ if __name__ == "__main__":
     result   = predict_url(user_url)
     label    = result["label"]
     conf     = result["confidence"] * 100
-    icon     = "⚠️" if label == "PHISHING" else "✅"
-    print(f"\n{icon}  {label}  ({conf:.2f}% confidence)")
+    icon     = "🚨" if label == "PHISHING" else ("⚠️" if label == "SUSPICIOUS" else "✅")
+    print(f"\n{icon}  {label}  ({conf:.1f}% confidence)  [{result['risk_tier']} RISK]")
     if result["reasons"]:
         print("Reasons:")
         for r in result["reasons"]:
             print(f"  • {r}")
     else:
-        print("No obvious risk patterns detected.")
+        print("No risk patterns detected.")

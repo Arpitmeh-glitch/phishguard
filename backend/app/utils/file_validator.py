@@ -1,19 +1,11 @@
 """
-File Upload Validator
-======================
-Two-layer validation for uploaded files:
+File Upload Validator — Enhanced
+==================================
+Two-layer validation + broad file type support.
 
-Layer 1 — MIME type check (from client Content-Type header)
-Layer 2 — Magic bytes verification (reads first 16 bytes of file content)
-           This catches files where the client lies about Content-Type.
-
-Also computes SHA-256 hash for:
-  - Duplicate detection
-  - Future threat intelligence lookups
-  - Audit trail enrichment
-
-Known-malicious hash list is intentionally empty in OSS build.
-In production, populate KNOWN_MALICIOUS_HASHES from a threat feed.
+Supported types:
+  - text/plain (.txt), text/html (.html), application/pdf (.pdf)
+  - .docx, .xlsx (OOXML), .zip, .csv, .json, .eml, .xml
 """
 
 import hashlib
@@ -30,42 +22,44 @@ ALLOWED_MIME_TYPES = frozenset({
     "application/json",
     "application/xml",
     "text/xml",
-    "message/rfc822",   # .eml email files
+    "message/rfc822",
+    "application/pdf",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "application/zip",
+    "application/x-zip-compressed",
+    "application/octet-stream",  # fallback for browsers sending docx/xlsx
 })
 
-# ── Magic bytes → (description, allowed) ─────────────────────────────────────
-# Maps the first N bytes of a file to its real type.
-# If the magic bytes match a known dangerous format, the upload is rejected
-# regardless of what the client claims the Content-Type is.
+# ── Magic bytes map ────────────────────────────────────────────────────────────
+# (magic_bytes, description, allowed)
 _MAGIC_BLOCKS: list[tuple[bytes, str, bool]] = [
-    # Executables / dangerous
-    (b"MZ",                   "PE executable (EXE/DLL)",       False),
-    (b"\x7fELF",              "ELF executable",                 False),
-    (b"\xca\xfe\xba\xbe",    "Mach-O executable",              False),
-    (b"\xfe\xed\xfa\xce",    "Mach-O executable",              False),
-    (b"\xfe\xed\xfa\xcf",    "Mach-O 64-bit executable",       False),
-    (b"#!/",                  "Shell script",                   False),
-    (b"#!",                   "Script file",                    False),
-    (b"%!PS",                 "PostScript",                     False),
-    # Archives that could contain executables
-    (b"PK\x03\x04",          "ZIP archive",                    False),
-    (b"PK\x05\x06",          "ZIP archive (empty)",            False),
-    (b"\x1f\x8b",            "Gzip archive",                   False),
-    (b"BZh",                  "Bzip2 archive",                  False),
-    (b"\xfd7zXZ\x00",        "XZ archive",                     False),
-    (b"Rar!",                 "RAR archive",                    False),
-    (b"7z\xbc\xaf'",         "7-Zip archive",                  False),
-    # Office documents (can contain macros — reject)
-    (b"\xd0\xcf\x11\xe0",   "MS Office legacy (OLE2)",        False),
-    # PDFs — text content only, reject binary PDFs to be safe
-    (b"%PDF",                 "PDF document",                   False),
-    # Allowed text formats (sanity check)
-    (b"\xef\xbb\xbf",        "UTF-8 BOM text",                 True),   # UTF-8 BOM
+    # Executables — always rejected
+    (b"MZ",                   "PE executable (EXE/DLL)",           False),
+    (b"\x7fELF",              "ELF executable",                     False),
+    (b"\xca\xfe\xba\xbe",    "Mach-O executable",                  False),
+    (b"\xfe\xed\xfa\xce",    "Mach-O executable",                  False),
+    (b"\xfe\xed\xfa\xcf",    "Mach-O 64-bit executable",           False),
+    (b"#!/",                  "Shell script",                       False),
+    (b"#!",                   "Script file",                        False),
+    (b"%!PS",                 "PostScript",                         False),
+    # Dangerous archives
+    (b"\x1f\x8b",            "Gzip archive",                       False),
+    (b"BZh",                  "Bzip2 archive",                      False),
+    (b"\xfd7zXZ\x00",        "XZ archive",                         False),
+    (b"Rar!",                 "RAR archive",                        False),
+    (b"7z\xbc\xaf",          "7-Zip archive",                      False),
+    # Legacy OLE2 Office (.doc/.xls with macro risk) — reject
+    (b"\xd0\xcf\x11\xe0",   "MS Office legacy OLE2 (macro risk)", False),
+    # Allowed: PDF
+    (b"%PDF",                 "PDF document",                       True),
+    # Allowed: ZIP / OOXML (.docx and .xlsx are ZIP internally)
+    (b"PK\x03\x04",          "ZIP/OOXML (DOCX/XLSX/ZIP)",          True),
+    (b"PK\x05\x06",          "ZIP archive (empty)",                True),
+    # Allowed: UTF-8 BOM text
+    (b"\xef\xbb\xbf",        "UTF-8 BOM text",                     True),
 ]
 
-# ── Known-malicious SHA-256 hashes ────────────────────────────────────────────
-# Populate from a threat feed in production.
-# Format: lowercase hex SHA-256 strings.
 KNOWN_MALICIOUS_HASHES: frozenset[str] = frozenset()
 
 
@@ -80,60 +74,45 @@ def validate_file_content(
     filename: str,
 ) -> tuple[str, str]:
     """
-    Validate file content via magic bytes and check against known-malicious hashes.
-
-    Args:
-        content:       Raw file bytes.
-        declared_mime: Content-Type from the client (first validation layer).
-        filename:      Original filename (for logging/error messages).
+    Validate file content via MIME type and magic bytes.
 
     Returns:
         Tuple of (sha256_hex, detected_type_description)
 
     Raises:
-        HTTPException(400): If file type is not allowed.
-        HTTPException(400): If magic bytes indicate a dangerous file type.
-        HTTPException(400): If SHA-256 matches a known-malicious hash.
+        HTTPException(400) if file type is disallowed.
     """
-    # Layer 1: MIME type check
-    if declared_mime not in ALLOWED_MIME_TYPES:
+    # Normalise: strip charset and boundary params
+    base_mime = declared_mime.split(";")[0].strip().lower()
+
+    if base_mime not in ALLOWED_MIME_TYPES:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=(
-                f"File type '{declared_mime}' is not permitted. "
-                f"Allowed: {', '.join(sorted(ALLOWED_MIME_TYPES))}"
+                f"File type '{base_mime}' is not permitted. "
+                "Allowed formats: PDF, DOCX, XLSX, ZIP, TXT, HTML, CSV, JSON, EML."
             ),
         )
 
-    # Layer 2: Magic bytes check
+    # Magic bytes check
     header = content[:16]
     for magic, description, allowed in _MAGIC_BLOCKS:
         if header.startswith(magic):
             if not allowed:
-                logger.warning(
-                    f"Rejected file '{filename}' — magic bytes match: {description}"
-                )
+                logger.warning(f"Rejected '{filename}' — magic bytes: {description}")
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=(
-                        f"File content does not match an allowed type. "
-                        f"Detected: {description}. "
-                        f"Only plain text, HTML, CSV, JSON, XML, and .eml files are accepted."
-                    ),
+                    detail=f"File content rejected: detected {description}.",
                 )
+            break
 
-    # Layer 3: SHA-256 threat hash check
     sha256 = compute_sha256(content)
     if sha256 in KNOWN_MALICIOUS_HASHES:
-        logger.warning(
-            f"THREAT DETECTED — file '{filename}' matches known-malicious hash: {sha256}"
-        )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="File matches a known malicious signature and cannot be processed.",
+            detail="File matches a known malicious signature.",
         )
 
-    # Detect actual content type for logging
     detected = "text/unknown"
     for magic, description, _ in _MAGIC_BLOCKS:
         if header.startswith(magic):
