@@ -6,10 +6,27 @@ import { Shield, Eye, EyeOff, AlertCircle } from "lucide-react";
 import toast from "react-hot-toast";
 import { useAuthStore } from "@/lib/store";
 
+/*
+ * SECURITY: Admin login option has been REMOVED from this page.
+ *
+ * Previous version exposed admin credentials and an admin demo button
+ * in the sign-in UI — a serious information-disclosure risk.
+ *
+ * Admin access is now exclusively handled via:
+ *   1. Backend authentication: the /auth/login endpoint enforces the
+ *      ADMIN_EMAIL gate (only the configured admin email may receive an
+ *      admin-role JWT token).
+ *   2. Protected admin routes: /dashboard/admin/* requires admin role
+ *      verified server-side on every request.
+ *
+ * There is intentionally NO admin UI button, demo credential, or
+ * role-selector anywhere on this page.
+ */
+
+// Only non-privileged demo accounts are shown — no admin account.
 const DEMO_ACCOUNTS = [
-  { label: "Admin",   email: "admin@phishguard.io",   password: "Admin123!", role: "admin",   color: "#ffd60a" },
-  { label: "Analyst", email: "analyst@phishguard.io", password: "Analyst1!", role: "analyst", color: "#bf5af2" },
-  { label: "User",    email: "user@phishguard.io",    password: "User1234!", role: "user",    color: "#00f5ff" },
+  { label: "Analyst", email: "analyst@phishguard.io", password: "Analyst1!", color: "#bf5af2" },
+  { label: "User",    email: "user@phishguard.io",    password: "User1234!", color: "#00f5ff" },
 ];
 
 export default function LoginPage() {
@@ -20,10 +37,6 @@ export default function LoginPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError]               = useState("");
 
-  /*
-   * FIX: e.preventDefault() is the critical first call — without it the browser
-   * performs a native form POST which reloads the page, discarding all state.
-   */
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
@@ -51,7 +64,7 @@ export default function LoginPage() {
       router.push("/dashboard");
     } catch (err: any) {
       const detail = err?.response?.data?.detail;
-      const msg = typeof detail === "string" ? detail : "Demo login failed — make sure the server is running";
+      const msg = typeof detail === "string" ? detail : "Demo login failed — ensure the server is running";
       setError(msg);
       toast.error(msg);
     }
@@ -59,20 +72,15 @@ export default function LoginPage() {
 
   return (
     <div className="min-h-screen grid-bg flex items-center justify-center px-4 py-8">
-      {/* Background orb — pointer-events:none, behind all content */}
-      <div
-        className="fixed inset-0"
-        style={{ zIndex: 0, pointerEvents: "none" }}
-        aria-hidden="true"
-      >
+      {/* Background orb */}
+      <div className="fixed inset-0" style={{ zIndex: 0, pointerEvents: "none" }} aria-hidden="true">
         <div
           className="absolute rounded-full"
           style={{
             top: "25%", left: "25%",
             width: "16rem", height: "16rem",
             background: "radial-gradient(circle, #00f5ff, transparent)",
-            filter: "blur(80px)",
-            opacity: 0.08,
+            filter: "blur(80px)", opacity: 0.08,
           }}
         />
       </div>
@@ -92,25 +100,14 @@ export default function LoginPage() {
           <p className="font-mono text-sm mt-1" style={{ color: "#8892b0" }}>Secure access portal</p>
         </div>
 
-        {/* Demo accounts */}
+        {/* Demo accounts — analyst and user only, NO admin */}
         <div className="cyber-card p-4 mb-4">
-          <div
-            className="text-xs font-mono uppercase tracking-wider mb-3 flex items-center gap-1.5"
-            style={{ color: "#8892b0" }}
-          >
-            <span
-              className="w-1.5 h-1.5 rounded-full animate-pulse inline-block"
-              style={{ background: "var(--neon-green)" }}
-            />
+          <div className="text-xs font-mono uppercase tracking-wider mb-3 flex items-center gap-1.5" style={{ color: "#8892b0" }}>
+            <span className="w-1.5 h-1.5 rounded-full animate-pulse inline-block" style={{ background: "var(--neon-green)" }} />
             Demo Accounts — Click to sign in instantly
           </div>
-          <div className="grid grid-cols-3 gap-2">
+          <div className="grid grid-cols-2 gap-2">
             {DEMO_ACCOUNTS.map((demo) => (
-              /*
-               * FIX: type="button" prevents these from accidentally submitting
-               * the login form if they're rendered inside a <form>.
-               * These are standalone buttons — they call loginAsDemo directly.
-               */
               <button
                 key={demo.label}
                 type="button"
@@ -131,9 +128,6 @@ export default function LoginPage() {
                 </div>
                 <div className="text-xs font-mono font-medium" style={{ color: demo.color }}>
                   {demo.label}
-                </div>
-                <div className="text-xs font-mono" style={{ color: "#8892b0", opacity: 0.7 }}>
-                  {demo.role}
                 </div>
               </button>
             ))}
@@ -156,7 +150,7 @@ export default function LoginPage() {
         <div className="cyber-card p-8">
           <div className="scanner-line" />
           <h2 className="font-display text-xl font-semibold mb-6" style={{ color: "#e8eaf0" }}>
-            Sign in manually
+            Sign in
           </h2>
 
           {error && (
@@ -169,11 +163,6 @@ export default function LoginPage() {
             </div>
           )}
 
-          {/*
-           * FIX: onSubmit handler with e.preventDefault() is the correct pattern.
-           * The form does NOT have action= set, which would cause native submission.
-           * noValidate disables browser validation popups (we validate manually).
-           */}
           <form onSubmit={handleSubmit} className="space-y-4" noValidate>
             <div>
               <label className="block text-xs font-mono uppercase tracking-wider mb-2" style={{ color: "#8892b0" }}>
@@ -182,7 +171,7 @@ export default function LoginPage() {
               <input
                 type="email"
                 className="scan-input"
-                placeholder="analyst@company.com"
+                placeholder="you@company.com"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 autoComplete="email"
@@ -226,7 +215,7 @@ export default function LoginPage() {
           </form>
 
           <div className="mt-6 text-center">
-            <span className="text-sm font-mono" style={{ color: "#8892b0" }}>New analyst? </span>
+            <span className="text-sm font-mono" style={{ color: "#8892b0" }}>New user? </span>
             <Link href="/auth/register" className="text-sm font-mono hover:underline" style={{ color: "var(--neon-cyan)" }}>
               Create account
             </Link>

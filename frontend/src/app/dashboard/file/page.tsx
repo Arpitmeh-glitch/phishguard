@@ -34,11 +34,15 @@ export default function FileScanPage() {
     multiple: false,
     maxSize: 10 * 1024 * 1024,
     accept: {
-      "text/plain": [".txt"],
-      "text/html": [".html", ".htm"],
-      "text/csv": [".csv"],
-      "application/json": [".json"],
-      "message/rfc822": [".eml"],
+      "text/plain":        [".txt"],
+      "text/html":         [".html", ".htm"],
+      "text/csv":          [".csv"],
+      "application/json":  [".json"],
+      "message/rfc822":    [".eml"],
+      "application/pdf":   [".pdf"],
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document": [".docx"],
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": [".xlsx"],
+      "application/zip":   [".zip"],
     },
   });
 
@@ -95,7 +99,7 @@ export default function FileScanPage() {
                 {isDragActive ? "Drop file here..." : "Drag & drop or click to upload"}
               </div>
               <div className="text-text-secondary text-xs font-mono">
-                .txt · .html · .csv · .json · .eml · Max 10MB
+                .pdf · .docx · .xlsx · .zip · .txt · .html · .csv · .json · Max 10MB
               </div>
             </div>
           </div>
@@ -106,8 +110,8 @@ export default function FileScanPage() {
       <div className="grid grid-cols-3 gap-3 mt-4">
         {[
           { label: "Encrypted at rest", desc: "AES-256-CBC" },
-          { label: "Background scan", desc: "Async processing" },
-          { label: "URL extraction", desc: "Regex + ML scan" },
+          { label: "Deep analysis",     desc: "PDF, DOCX, ZIP, HTML" },
+          { label: "Threat detection",  desc: "URLs · macros · payloads" },
         ].map((item) => (
           <div key={item.label} className="cyber-card p-3 text-center">
             <div className="text-text-primary text-xs font-mono">{item.label}</div>

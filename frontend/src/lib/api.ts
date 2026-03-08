@@ -104,6 +104,12 @@ export const userApi = {
   stats: () => api.get("/user/stats"),
 };
 
+// Threat Detection
+export const threatApi = {
+  live: (count = 20) => api.get("/threat/live", { params: { count } }),
+  analyze: (domain: string, port?: number) => api.post("/threat/analyze", { domain, port }),
+};
+
 // Admin
 export const adminApi = {
   stats: () => api.get("/admin/stats"),
