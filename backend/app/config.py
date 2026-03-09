@@ -9,22 +9,22 @@ class Settings(BaseSettings):
     APP_VERSION: str = "1.0.0"
     DEBUG: bool = False
     SECRET_KEY: str = secrets.token_urlsafe(32)
-    
+
     # Database
     DATABASE_URL: str = "postgresql://phishguard:phishguard_pass@postgres:5432/phishguard"
-    
+
     # Redis
     REDIS_URL: str = "redis://redis:6379/0"
-    
+
     # JWT
     JWT_SECRET_KEY: str = secrets.token_urlsafe(32)
     JWT_ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
-    
+
     # Encryption
     ENCRYPTION_KEY: Optional[str] = None  # 32-byte base64 key for AES-256
-    
+
     # OpenAI (optional)
     OPENAI_API_KEY: Optional[str] = None
     # Google Gemini API
@@ -33,26 +33,41 @@ class Settings(BaseSettings):
     GROQ_API_KEY: Optional[str] = None
     # VirusTotal threat intelligence (free tier: 4 req/min, 500 req/day)
     VIRUSTOTAL_API_KEY: Optional[str] = None
+
     # File uploads
     MAX_FILE_SIZE_MB: int = 10
-    UPLOAD_DIR: str = "/app/uploads"
-    
+    # FIX: Default changed from "/app/uploads" to "./uploads".
+    # "/app/uploads" only exists inside the Docker container. When running
+    # locally (uvicorn directly), Python has no write permission to /app and
+    # upload_dir.mkdir() raises PermissionError, which scan.py caught and
+    # re-raised as HTTP 400 "File processing failed" — hiding the real cause.
+    # "./uploads" is relative to the working directory and always writable.
+    # Override with UPLOAD_DIR=/app/uploads in .env when running in Docker.
+    UPLOAD_DIR: str = "./uploads"
+
     # Rate limiting
     RATE_LIMIT_PER_MINUTE: int = 30
-    
+
     # FIX: ADMIN_EMAIL was referenced in auth.py but never defined here,
     # causing AttributeError → 500 on every admin login attempt.
     # Default is the seeded demo admin account email.
     ADMIN_EMAIL: str = "admin@phishguard.io"
-    
+
     # CORS
+    # IMPORTANT: http://127.0.0.1:3000 and http://localhost:3000 are treated as
+    # DIFFERENT origins by browsers even though they resolve to the same address.
+    # Both must be listed explicitly — omitting either causes OPTIONS preflight
+    # failures depending on which form appears in the browser's address bar.
     ALLOWED_ORIGINS: list = [
         "http://localhost:3000",
         "http://localhost:3001",
+        "http://127.0.0.1:3000",
+        "http://127.0.0.1:3001",
         "https://phishguard.io",
         "https://phishguard-brown.vercel.app",
+        "https://phishguard-arpitmeh-glitchs-projects.vercel.app",
     ]
-    
+
     class Config:
         env_file = ".env"
         case_sensitive = True

@@ -9,10 +9,17 @@ Added in this version:
   - app/routes/threat.py             — Extended SOC endpoints (incidents, network scan, feeds)
 
 Middleware order (outermost → innermost):
-  1. CORSMiddleware
-  2. SecurityHeadersMiddleware
-  3. TrustedHostMiddleware
-  4. Application routes
+  FastAPI's add_middleware() builds a stack: the LAST middleware added runs
+  OUTERMOST (first to receive a request, last to process a response).
+
+  Order of add_middleware() calls below:
+    1. TrustedHostMiddleware     ← added first → runs innermost
+    2. SecurityHeadersMiddleware ← added second
+    3. CORSMiddleware            ← added last  → runs outermost ✓
+
+  CORSMiddleware must be outermost so it can short-circuit OPTIONS preflight
+  requests with HTTP 200 before TrustedHostMiddleware or SecurityHeadersMiddleware
+  inspect them. This ordering is correct.
 """
 import logging
 from contextlib import asynccontextmanager
@@ -28,12 +35,6 @@ from slowapi.errors import RateLimitExceeded
 from app.config import settings
 from app.database import engine, Base
 from app.routes import auth, scan, user, admin, threat
-try:
-    from app.routes import agent as agent_route
-    _AGENT_ROUTE_AVAILABLE = True
-except Exception as _e:
-    _AGENT_ROUTE_AVAILABLE = False
-    logger.warning(f"Agent route not available: {_e}")
 from app.services import url_service
 from app.utils.seed import seed_demo_accounts
 from app.utils.security_headers import SecurityHeadersMiddleware
@@ -77,7 +78,8 @@ async def lifespan(app: FastAPI):
         from app.services.threat_feed import ensure_loaded, FEED_REFRESH_INTERVAL
         ensure_loaded()
         logger.info(
-            "✅ Threat intelligence feeds loading in background "            "(refresh interval: %ds)", FEED_REFRESH_INTERVAL,
+            "✅ Threat intelligence feeds loading in background "
+            "(refresh interval: %ds)", FEED_REFRESH_INTERVAL,
         )
     except Exception as e:
         logger.warning("Threat feed init failed (non-fatal): %s", e)
@@ -102,15 +104,27 @@ app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # ── Middleware ────────────────────────────────────────────────────────────────
+# Add in reverse priority order — last added = outermost = first to run.
+
+# Innermost: TrustedHost (only validates the Host header)
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=["*"])
+
+# Middle: SecurityHeaders (injects CSP, HSTS, X-Frame-Options etc. into responses)
 app.add_middleware(SecurityHeadersMiddleware)
+
+# Outermost: CORS — MUST be last so it runs first on every request.
+# It short-circuits OPTIONS preflight requests immediately, returning HTTP 200
+# with the correct Access-Control-* headers before the inner middleware runs.
+#
+# Origins are read from settings.ALLOWED_ORIGINS (defined in config.py) so
+# the list is maintained in one place and can be overridden via environment
+# variables without touching code.
+#
+# allow_origin_regex additionally covers all Vercel preview deployment URLs
+# (e.g. phishguard-git-main-xyz.vercel.app) without enumerating each one.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "https://phishguard-brown.vercel.app",
-        "https://phishguard-arpitmeh-glitchs-projects.vercel.app",
-    ],
+    allow_origins=settings.ALLOWED_ORIGINS,
     allow_origin_regex=r"https://.*\.vercel\.app",
     allow_credentials=True,
     allow_methods=["*"],
@@ -120,14 +134,13 @@ app.add_middleware(
 )
 
 # ── Routes ────────────────────────────────────────────────────────────────────
+# Routers are registered AFTER all middleware. This is required — middleware
+# added after include_router() calls would not wrap those routes.
 app.include_router(auth.router,   prefix="/api/v1")
 app.include_router(scan.router,   prefix="/api/v1")
 app.include_router(user.router,   prefix="/api/v1")
 app.include_router(admin.router,  prefix="/api/v1")
 app.include_router(threat.router, prefix="/api/v1")
-if _AGENT_ROUTE_AVAILABLE:
-    app.include_router(agent_route.router, prefix="/api/v1")
-    logger.info("✅ Agent route registered at /api/v1/agent")
 
 
 @app.get("/api/health")

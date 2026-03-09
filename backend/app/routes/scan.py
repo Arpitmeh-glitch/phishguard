@@ -198,10 +198,18 @@ async def scan_file(
     try:
         file_record, sha256 = await save_encrypted_file(file, str(current_user.id), db)
     except HTTPException:
+        # Re-raise HTTPExceptions from save_encrypted_file as-is.
+        # These are intentional errors with correct status codes:
+        #   400 → validation failures (bad MIME type, magic bytes, empty file)
+        #   413 → file too large
+        #   500 → server-side I/O / misconfiguration errors
         raise
     except Exception as exc:
+        # Unexpected exceptions (not raised by us) are server errors, not
+        # client errors.  Using 400 here was misleading — the upload was
+        # well-formed; something inside the server failed.
         logger.error("Unexpected error saving uploaded file: %s", exc, exc_info=True)
-        raise HTTPException(status_code=400, detail="File processing failed")
+        raise HTTPException(status_code=500, detail="Unexpected server error during file processing.")
 
     background_tasks.add_task(
         process_file_scan,

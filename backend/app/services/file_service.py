@@ -249,12 +249,37 @@ async def save_encrypted_file(
     encrypted_data, iv_hex = encrypt_file(content)
 
     upload_dir = Path(settings.UPLOAD_DIR)
-    upload_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        upload_dir.mkdir(parents=True, exist_ok=True)
+    except PermissionError as exc:
+        # This happens when UPLOAD_DIR points to a path the process cannot
+        # create, most commonly "/app/uploads" when running locally outside
+        # Docker.  Override UPLOAD_DIR in .env (e.g. UPLOAD_DIR=./uploads).
+        logger.error(
+            "Cannot create upload directory '%s': %s. "
+            "Set UPLOAD_DIR to a writable path in your .env file.",
+            upload_dir, exc,
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                f"Server misconfiguration: upload directory '{upload_dir}' "
+                "is not writable. Contact your administrator."
+            ),
+        )
+
     stored_filename = f"{uuid.uuid4()}.enc"
     stored_path = upload_dir / stored_filename
 
-    with open(stored_path, "wb") as f:
-        f.write(encrypted_data)
+    try:
+        with open(stored_path, "wb") as f:
+            f.write(encrypted_data)
+    except OSError as exc:
+        logger.error("Failed to write encrypted file to '%s': %s", stored_path, exc)
+        raise HTTPException(
+            status_code=500,
+            detail="Server error: could not store uploaded file.",
+        )
 
     record = FileUpload(
         user_id=UUID(user_id),
