@@ -87,9 +87,26 @@ export const scanApi = {
   file: (file: File) => {
     const fd = new FormData();
     fd.append("file", file);
-    // Do NOT manually set Content-Type here — axios must auto-set it
-    // with the correct multipart boundary.
-    return api.post("/scan/file", fd);
+    // WHY we delete Content-Type here:
+    //
+    // The axios instance is created with a default
+    //   headers: { "Content-Type": "application/json" }
+    // That default survives into every request's config.headers object,
+    // even for FormData bodies.  axios's automatic multipart detection
+    // only strips Content-Type from per-request headers, not from
+    // instance-level defaults that have already been merged in.
+    //
+    // The request interceptor above (line ~36) receives a config whose
+    // headers already contain "Content-Type: application/json", so it
+    // returns that header intact — and FastAPI sees the wrong content
+    // type, cannot find the 'file' form field, and responds HTTP 422.
+    //
+    // Passing `headers: { "Content-Type": undefined }` in the per-request
+    // config overrides the instance default for this call only, which lets
+    // the browser set `multipart/form-data; boundary=<...>` automatically.
+    return api.post("/scan/file", fd, {
+      headers: { "Content-Type": undefined },
+    });
   },
 };
 
@@ -112,12 +129,6 @@ export const threatApi = {
 
   // Network scanner — replaces the old /threat/live endpoint
   networkScan: () => api.get("/threat/network-scan"),
-};
-
-// Agent — local network scan results submitted by phishguard_agent.py
-export const agentApi = {
-  getNetworkReport: () => api.get("/agent/network-report"),
-  getStatus: () => api.get("/agent/status"),
 };
 
 // Admin
