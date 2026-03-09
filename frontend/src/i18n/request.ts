@@ -1,55 +1,57 @@
 import { getRequestConfig } from "next-intl/server";
-import { notFound } from "next/navigation";
+import { cookies } from "next/headers";
 
-// ---------------------------------------------------------------------------
+// ─────────────────────────────────────────────────────────────────────────────
 // Supported locales
-// ---------------------------------------------------------------------------
+// ─────────────────────────────────────────────────────────────────────────────
 export const locales = ["en", "hi"] as const;
 export type Locale = (typeof locales)[number];
 export const defaultLocale: Locale = "en";
 
-// ---------------------------------------------------------------------------
-// WHY a static import map
-// ---------------------------------------------------------------------------
-// Webpack performs static analysis on every import() at build time.
-// A dynamic template literal:
+// ─────────────────────────────────────────────────────────────────────────────
+// WHY a static import map instead of a dynamic template literal
+// ─────────────────────────────────────────────────────────────────────────────
+// Webpack (used by Next.js) performs static analysis at build time on every
+// `import()` call.  When it sees:
 //
 //   import(`../messages/${locale}.json`)
 //
-// causes webpack to mis-resolve the directory when the file lives in a
-// subdirectory (src/i18n/), producing "Cannot find module './en.json'".
+// it needs to know which directory to bundle.  When `request.ts` lives at
+// src/i18n/request.ts, the path `../messages/` resolves correctly at
+// *runtime* (Node.js) but webpack resolves paths relative to the project root
+// during the compilation phase — and the two differ.  The result is the error:
 //
-// Explicit static imports in a lookup table give webpack concrete paths it
-// can trace directly to disk — fully resolving the build error.
-// ---------------------------------------------------------------------------
+//   Module not found: Can't resolve '../messages'
+//   Error: Cannot find module './en.json'
+//
+// The fix: give webpack fully-static import() calls that it can analyse
+// unambiguously at build time.  A locale→loader map achieves this because each
+// entry is a plain, non-template import() that webpack can trace to a real
+// file on disk during the bundle step.
+// ─────────────────────────────────────────────────────────────────────────────
 
-type MessageImport = { default: Record<string, unknown> };
+type MessageLoader = () => Promise<{ default: Record<string, unknown> }>;
 
-const messageLoaders: Record<Locale, () => Promise<MessageImport>> = {
+const messageLoaders: Record<Locale, MessageLoader> = {
   en: () => import("../messages/en.json"),
   hi: () => import("../messages/hi.json"),
 };
 
-// ---------------------------------------------------------------------------
-// getRequestConfig
-// ---------------------------------------------------------------------------
-// With localePrefix: "as-needed" the middleware rewrites /  → /en and
-// passes the locale as a route segment parameter.  next-intl reads it from
-// the [locale] segment and injects it as `requestLocale` here.
-// ---------------------------------------------------------------------------
+// ─────────────────────────────────────────────────────────────────────────────
+// getRequestConfig — called by next-intl on every server render
+// ─────────────────────────────────────────────────────────────────────────────
+export default getRequestConfig(async () => {
+  // Read the locale that the LanguageSwitcher persisted in the cookie.
+  const cookieStore = await cookies();
+  const cookieLocale = cookieStore.get("NEXT_LOCALE")?.value;
 
-export default getRequestConfig(async ({ requestLocale }) => {
-  // `requestLocale` is a Promise in next-intl v3 — await it.
-  const requested = await requestLocale;
+  // Validate: fall back to English if the cookie holds an unsupported value.
+  const locale: Locale =
+    cookieLocale && (locales as readonly string[]).includes(cookieLocale)
+      ? (cookieLocale as Locale)
+      : defaultLocale;
 
-  // Validate — reject unknown locale values with a 404 instead of crashing.
-  if (!requested || !(locales as readonly string[]).includes(requested)) {
-    notFound();
-  }
-
-  const locale = requested as Locale;
-
-  // Load messages with a safe English fallback if the file is somehow absent.
+  // Load messages — fall back to English if the target file somehow fails.
   const loader = messageLoaders[locale] ?? messageLoaders[defaultLocale];
   const messages = await loader()
     .then((m) => m.default)
