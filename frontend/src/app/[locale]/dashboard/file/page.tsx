@@ -17,7 +17,7 @@ export default function FileScanPage() {
     mutationFn: (f: File) => scanApi.file(f).then((r) => r.data),
     onSuccess: (data) => {
       setResult(data);
-      toast.success({t("uploadSuccess")});
+      toast.success(t("uploadSuccess"));
     },
     onError: (err: any) => {
       toast.error(err?.response?.data?.detail || "Upload failed");
