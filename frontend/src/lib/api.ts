@@ -114,6 +114,12 @@ export const threatApi = {
   networkScan: () => api.get("/threat/network-scan"),
 };
 
+// Agent — local network scan results submitted by phishguard_agent.py
+export const agentApi = {
+  getNetworkReport: () => api.get("/agent/network-report"),
+  getStatus: () => api.get("/agent/status"),
+};
+
 // Admin
 export const adminApi = {
   stats: () => api.get("/admin/stats"),

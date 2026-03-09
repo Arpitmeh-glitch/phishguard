@@ -28,6 +28,12 @@ from slowapi.errors import RateLimitExceeded
 from app.config import settings
 from app.database import engine, Base
 from app.routes import auth, scan, user, admin, threat
+try:
+    from app.routes import agent as agent_route
+    _AGENT_ROUTE_AVAILABLE = True
+except Exception as _e:
+    _AGENT_ROUTE_AVAILABLE = False
+    logger.warning(f"Agent route not available: {_e}")
 from app.services import url_service
 from app.utils.seed import seed_demo_accounts
 from app.utils.security_headers import SecurityHeadersMiddleware
@@ -119,6 +125,9 @@ app.include_router(scan.router,   prefix="/api/v1")
 app.include_router(user.router,   prefix="/api/v1")
 app.include_router(admin.router,  prefix="/api/v1")
 app.include_router(threat.router, prefix="/api/v1")
+if _AGENT_ROUTE_AVAILABLE:
+    app.include_router(agent_route.router, prefix="/api/v1")
+    logger.info("✅ Agent route registered at /api/v1/agent")
 
 
 @app.get("/api/health")
