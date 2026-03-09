@@ -6,8 +6,10 @@ import { useMutation } from "@tanstack/react-query";
 import { scanApi } from "@/lib/api";
 import toast from "react-hot-toast";
 import { clsx } from "clsx";
+import { useTranslations } from "next-intl";
 
 export default function FileScanPage() {
+  const t = useTranslations("scan.file");
   const [result, setResult] = useState<any>(null);
   const [file, setFile] = useState<File | null>(null);
 
@@ -15,7 +17,7 @@ export default function FileScanPage() {
     mutationFn: (f: File) => scanApi.file(f).then((r) => r.data),
     onSuccess: (data) => {
       setResult(data);
-      toast.success("File uploaded. Background scan started.");
+      toast.success({t("uploadSuccess")});
     },
     onError: (err: any) => {
       toast.error(err?.response?.data?.detail || "Upload failed");

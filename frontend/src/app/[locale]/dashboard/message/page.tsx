@@ -5,6 +5,7 @@ import { useMutation } from "@tanstack/react-query";
 import { scanApi } from "@/lib/api";
 import toast from "react-hot-toast";
 import { clsx } from "clsx";
+import { useTranslations } from "next-intl";
 
 interface MessageResult {
   scan_id: string;
@@ -32,6 +33,7 @@ const SAMPLES = [
 ];
 
 export default function MessageScanPage() {
+  const t = useTranslations("scan.message");
   const [message, setMessage] = useState("");
   const [result, setResult] = useState<MessageResult | null>(null);
 

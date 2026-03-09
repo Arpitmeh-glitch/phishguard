@@ -14,6 +14,7 @@ import {
 } from "recharts";
 import { userApi, threatApi } from "@/lib/api";
 import { useAuthStore } from "@/lib/store";
+import { useTranslations } from "next-intl";
 
 // ── Animated counter ──────────────────────────────────────────────────────────
 function AnimatedCounter({ value, duration = 1.2 }: { value: number; duration?: number }) {
@@ -221,6 +222,7 @@ const mockTrend = [
 
 // ── Main SOC Dashboard ────────────────────────────────────────────────────────
 export default function DashboardPage() {
+  const t = useTranslations("dashboard");
   const { user } = useAuthStore();
 
   const { data: stats, isLoading: statsLoading } = useQuery({
@@ -280,7 +282,7 @@ export default function DashboardPage() {
         <motion.h1 initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1, duration: 0.5 }}
           className="font-display text-2xl lg:text-3xl font-bold" style={{ color: "#e8eaf0" }}
         >
-          Welcome back,{" "}
+          {t("welcome")},{" "}
           <span style={{ color: "#00f5ff" }}><TypingText text={user?.username ?? "Analyst"} delay={0.3} /></span>
         </motion.h1>
         <motion.p initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.5 }}
@@ -323,9 +325,9 @@ export default function DashboardPage() {
 
       {/* ── Stats grid ───────────────────────────────────────────────── */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-        <StatCard icon={Shield}        label="Total Scans"      value={statsLoading ? 0 : (stats?.total_scans ?? 0)}      color="cyan"   delay={0}    />
-        <StatCard icon={AlertTriangle} label="Threats Detected" value={statsLoading ? 0 : (stats?.threats_detected ?? 0)} color="red"    delay={0.07} sublabel={`${stats?.threat_rate ?? 0}% rate`} />
-        <StatCard icon={CheckCircle}   label="Safe Results"     value={statsLoading ? 0 : (stats?.safe ?? 0)}             color="green"  delay={0.14} />
+        <StatCard icon={Shield}        label={t("totalScans")}      value={statsLoading ? 0 : (stats?.total_scans ?? 0)}      color="cyan"   delay={0}    />
+        <StatCard icon={AlertTriangle} label={t("threatsDetected")} value={statsLoading ? 0 : (stats?.threats_detected ?? 0)} color="red"    delay={0.07} sublabel={`${stats?.threat_rate ?? 0}% rate`} />
+        <StatCard icon={CheckCircle}   label={t("safeItems")}     value={statsLoading ? 0 : (stats?.safe ?? 0)}             color="green"  delay={0.14} />
         <StatCard icon={TrendingUp}    label="Suspicious"       value={statsLoading ? 0 : (stats?.suspicious ?? 0)}       color="yellow" delay={0.21} />
       </div>
 

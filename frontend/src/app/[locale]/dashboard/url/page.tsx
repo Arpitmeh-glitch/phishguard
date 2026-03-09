@@ -5,6 +5,7 @@ import { useMutation } from "@tanstack/react-query";
 import { scanApi } from "@/lib/api";
 import toast from "react-hot-toast";
 import { clsx } from "clsx";
+import { useTranslations } from "next-intl";
 
 interface ScanResult {
   scan_id: string;

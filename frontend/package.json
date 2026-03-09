@@ -21,7 +21,8 @@
     "react-hot-toast": "^2.4.1",
     "recharts": "^2.12.7",
     "tailwind-merge": "^2.3.0",
-    "zustand": "^4.5.2"
+    "zustand": "^4.5.2",
+    "next-intl": "^3.14.0"
   },
   "devDependencies": {
     "@types/node": "^20",
