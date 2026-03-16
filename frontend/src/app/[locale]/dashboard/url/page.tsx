@@ -1,6 +1,6 @@
 "use client";
 import { useState } from "react";
-import { Globe, Shield, AlertTriangle, CheckCircle, ChevronRight, Loader2 } from "lucide-react";
+import { Globe, Shield, AlertTriangle, CheckCircle, ChevronRight, Loader2, AlertCircle } from "lucide-react";
 import { useMutation } from "@tanstack/react-query";
 import { scanApi } from "@/lib/api";
 import toast from "react-hot-toast";
@@ -9,51 +9,93 @@ import { useTranslations } from "next-intl";
 
 interface ScanResult {
   scan_id: string;
-  label: string;
+  label: "SAFE" | "SUSPICIOUS" | "PHISHING";
   confidence: number;
   reasons: string[];
   detection_mode: string;
   created_at: string;
 }
 
+// ---------------------------------------------------------------------------
+// ResultCard
+// ---------------------------------------------------------------------------
+// Verdict color/icon is determined SOLELY by result.label (3 tiers):
+//   SAFE       → green  (neon-green)
+//   SUSPICIOUS → yellow (neon-yellow / amber)
+//   PHISHING   → red    (neon-red)
+//
+// Confidence is displayed as Math.round(result.confidence * 100) + "%"
+// because the API returns a decimal (e.g. 0.96 → 96%).
+// ---------------------------------------------------------------------------
+
 function ResultCard({ result }: { result: ScanResult }) {
-  const isPhishing = result.label === "PHISHING";
-  const conf = Math.round(result.confidence * 100);
+  const label = result.label;                          // "SAFE" | "SUSPICIOUS" | "PHISHING"
+  const conf  = Math.round(result.confidence * 100);  // decimal → percentage
+
+  // Derive per-tier style tokens
+  const isPhishing   = label === "PHISHING";
+  const isSuspicious = label === "SUSPICIOUS";
+  const isSafe       = label === "SAFE";
+
+  const borderColor = isPhishing
+    ? "border-l-neon-red"
+    : isSuspicious
+    ? "border-l-yellow-400"
+    : "border-l-neon-green";
+
+  const iconBg = isPhishing
+    ? "bg-neon-red/10 border-neon-red/30"
+    : isSuspicious
+    ? "bg-yellow-400/10 border-yellow-400/30"
+    : "bg-neon-green/10 border-neon-green/30";
+
+  const textColor = isPhishing
+    ? "text-neon-red"
+    : isSuspicious
+    ? "text-yellow-400"
+    : "text-neon-green";
+
+  const barGradient = isPhishing
+    ? "linear-gradient(90deg, #ff2d55, #ff6b88)"
+    : isSuspicious
+    ? "linear-gradient(90deg, #facc15, #fde68a)"
+    : "linear-gradient(90deg, #00ff88, #00ffaa)";
+
+  const reasonBg = isPhishing
+    ? "bg-neon-red/5 border border-neon-red/10"
+    : isSuspicious
+    ? "bg-yellow-400/5 border border-yellow-400/10"
+    : "bg-neon-green/5 border border-neon-green/10";
+
+  const chevronColor = isPhishing
+    ? "text-neon-red"
+    : isSuspicious
+    ? "text-yellow-400"
+    : "text-neon-green";
+
+  const Icon = isPhishing
+    ? AlertTriangle
+    : isSuspicious
+    ? AlertCircle
+    : CheckCircle;
 
   return (
-    <div className={clsx(
-      "cyber-card p-6 mt-6 border-l-4",
-      isPhishing ? "border-l-neon-red" : "border-l-neon-green"
-    )}>
+    <div className={clsx("cyber-card p-6 mt-6 border-l-4", borderColor)}>
       {/* Verdict */}
       <div className="flex items-center gap-4 mb-5">
-        <div className={clsx(
-          "w-12 h-12 rounded-xl flex items-center justify-center border",
-          isPhishing
-            ? "bg-neon-red/10 border-neon-red/30"
-            : "bg-neon-green/10 border-neon-green/30"
-        )}>
-          {isPhishing
-            ? <AlertTriangle className="w-6 h-6 text-neon-red" />
-            : <CheckCircle className="w-6 h-6 text-neon-green" />
-          }
+        <div className={clsx("w-12 h-12 rounded-xl flex items-center justify-center border", iconBg)}>
+          <Icon className={clsx("w-6 h-6", textColor)} />
         </div>
         <div>
-          <div className={clsx(
-            "font-display text-2xl font-bold",
-            isPhishing ? "text-neon-red" : "text-neon-green"
-          )}>
-            {result.label}
+          <div className={clsx("font-display text-2xl font-bold", textColor)}>
+            {label}
           </div>
           <div className="text-text-secondary text-xs font-mono">
             Mode: {result.detection_mode}
           </div>
         </div>
         <div className="ml-auto text-right">
-          <div className={clsx(
-            "font-display text-3xl font-bold",
-            isPhishing ? "text-neon-red" : "text-neon-green"
-          )}>
+          <div className={clsx("font-display text-3xl font-bold", textColor)}>
             {conf}%
           </div>
           <div className="text-text-secondary text-xs font-mono">confidence</div>
@@ -64,12 +106,7 @@ function ResultCard({ result }: { result: ScanResult }) {
       <div className="progress-bar mb-5">
         <div
           className="progress-fill"
-          style={{
-            width: `${conf}%`,
-            background: isPhishing
-              ? "linear-gradient(90deg, #ff2d55, #ff6b88)"
-              : "linear-gradient(90deg, #00ff88, #00ffaa)",
-          }}
+          style={{ width: `${conf}%`, background: barGradient }}
         />
       </div>
 
@@ -81,19 +118,16 @@ function ResultCard({ result }: { result: ScanResult }) {
           </div>
           <div className="space-y-2">
             {result.reasons.map((reason, i) => (
-              <div key={i} className={clsx(
-                "flex items-start gap-2.5 p-3 rounded-lg text-sm font-mono",
-                isPhishing ? "bg-neon-red/5 border border-neon-red/10" : "bg-neon-green/5 border border-neon-green/10"
-              )}>
-                <ChevronRight className={clsx("w-3.5 h-3.5 mt-0.5 shrink-0", isPhishing ? "text-neon-red" : "text-neon-green")} />
-                <span style={{ color: "#e8eaf0" }} className=" text-xs">{reason}</span>
+              <div key={i} className={clsx("flex items-start gap-2.5 p-3 rounded-lg text-sm font-mono", reasonBg)}>
+                <ChevronRight className={clsx("w-3.5 h-3.5 mt-0.5 shrink-0", chevronColor)} />
+                <span style={{ color: "#e8eaf0" }} className="text-xs">{reason}</span>
               </div>
             ))}
           </div>
         </div>
       )}
 
-      {result.label === "SAFE" && result.reasons.length === 0 && (
+      {isSafe && result.reasons.length === 0 && (
         <div className="p-3 rounded-lg bg-neon-green/5 border border-neon-green/10 text-neon-green text-xs font-mono">
           ✓ No phishing indicators detected. URL appears legitimate.
         </div>
@@ -103,7 +137,7 @@ function ResultCard({ result }: { result: ScanResult }) {
 }
 
 export default function URLScanPage() {
-  const [url, setUrl] = useState("");
+  const [url, setUrl]       = useState("");
   const [result, setResult] = useState<ScanResult | null>(null);
 
   const { mutate, isPending } = useMutation({

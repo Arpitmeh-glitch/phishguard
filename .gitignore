@@ -30,3 +30,5 @@ build/
 .env.local
 .env.development
 .env.production
+backend/app/services/data/*.csv
+backend/app/services/data/*.txt

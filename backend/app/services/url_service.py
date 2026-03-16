@@ -49,8 +49,9 @@ def initialize() -> None:
         _initialized = True
         logger.info("✅ URL detection model initialized")
     except Exception as e:
-        logger.warning("⚠ URL model init failed (may need datasets): %s", e)
-        _initialized = True
+        logger.error("❌ URL model init failed: %s", e)
+        _initialized = False
+        raise
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -127,7 +128,7 @@ async def scan_url_async(url: str) -> dict:
     """
     Full async detection pipeline.  Called directly from the FastAPI route.
     """
-    if not _initialized:
+    if not _initialized or getattr(_core, "_model", None) is None:
         initialize()
 
     # ── Layer 1 + 2: ML model + rule-based overlay ────────────────────────

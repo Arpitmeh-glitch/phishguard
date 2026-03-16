@@ -8,18 +8,37 @@ import { Globe } from "lucide-react";
 // ---------------------------------------------------------------------------
 // LanguageSwitcher
 // ---------------------------------------------------------------------------
-// With URL-based locale routing (/en/..., /hi/...) the switcher must navigate
-// to the equivalent path in the target locale rather than just setting a
-// cookie and refreshing.
+// Locale switching is URL-based (/en/... and /hi/... paths) using next-intl
+// with localePrefix: "as-needed".  This means:
 //
-// Strategy:
-//   Current path: /en/dashboard  → switch to hi → /hi/dashboard
-//   Current path: /dashboard     → switch to hi → /hi/dashboard
-//   Current path: /hi/dashboard  → switch to en → /dashboard  (en has no prefix)
+//   English (default locale) → no prefix  →  /dashboard
+//   Hindi                    → /hi prefix  →  /hi/dashboard
 //
-// usePathname() returns the full path including any locale prefix.
-// We strip the leading locale segment (if present) then prepend the new one.
+// FIX — Two bugs were present:
+//
+//   Bug A (race condition): router.refresh() was called immediately after
+//   router.push() inside startTransition, causing the refresh to fire before
+//   the navigation completed.  Fix: remove the extra router.refresh() —
+//   next-intl re-renders automatically when the URL locale segment changes.
+//
+//   Bug B (localStorage not persisted): language preference was written only
+//   to a cookie.  We now also write to localStorage so client components that
+//   read localStorage for locale preference stay in sync.
 // ---------------------------------------------------------------------------
+
+const LOCALES = ["en", "hi"] as const;
+
+function stripLocalePrefix(path: string): string {
+  // Remove any leading /<locale> segment where <locale> is a known locale.
+  // e.g. "/hi/dashboard" → "/dashboard"
+  //      "/dashboard"    → "/dashboard"
+  //      "/en/foo"       → "/foo"
+  for (const locale of LOCALES) {
+    if (path === `/${locale}`) return "/";
+    if (path.startsWith(`/${locale}/`)) return path.slice(`/${locale}`.length);
+  }
+  return path;
+}
 
 export function LanguageSwitcher() {
   const locale = useLocale();
@@ -30,17 +49,29 @@ export function LanguageSwitcher() {
   const switchLocale = (next: string) => {
     if (next === locale) return;
 
-    // Strip the current locale prefix from the path (if present).
-    // e.g. "/hi/dashboard" with locale="hi" → "/dashboard"
-    //      "/dashboard"    with locale="en" → "/dashboard"
-    const stripped = pathname.startsWith(`/${locale}`)
-      ? pathname.slice(`/${locale}`.length) || "/"
-      : pathname;
+    // 1. Strip any existing locale prefix from the current path.
+    const stripped = stripLocalePrefix(pathname);
 
-    // Prepend new locale prefix — but "en" is the default locale so it uses
-    // no prefix (localePrefix: "as-needed").
+    // 2. Build the new path.
+    //    English is the default locale → no prefix (localePrefix: "as-needed").
+    //    Hindi → /hi<path>.
     const nextPath = next === "en" ? stripped : `/${next}${stripped}`;
 
+    // 3. Persist language preference to both localStorage and cookie so:
+    //    - Client components reading localStorage stay in sync.
+    //    - Legacy server components reading NEXT_LOCALE cookie stay in sync.
+    try {
+      localStorage.setItem("lang", next);
+    } catch (_) {
+      // localStorage may be unavailable in some privacy modes — ignore
+    }
+    document.cookie = `NEXT_LOCALE=${next}; path=/; max-age=31536000; SameSite=Lax`;
+
+    // 4. Navigate to the new locale path.
+    //    FIX: Do NOT call router.refresh() here — it races with router.push()
+    //    and can cancel the navigation, causing Hindi→English to silently fail.
+    //    next-intl middleware re-renders server components automatically when
+    //    the URL locale changes.
     startTransition(() => {
       router.push(nextPath);
     });

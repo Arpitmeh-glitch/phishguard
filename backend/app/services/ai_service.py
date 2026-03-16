@@ -22,6 +22,7 @@ Design principles
 - All errors are caught and logged; they never propagate to callers.
 """
 
+
 import json
 import logging
 import asyncio
@@ -35,7 +36,7 @@ logger = logging.getLogger(__name__)
 
 # ── Model identifiers ─────────────────────────────────────────────────────────
 GROQ_MODEL   = "llama3-70b-8192"
-GEMINI_MODEL = "gemini-1.5-flash"
+GEMINI_MODEL = getattr(settings, "GEMINI_MODEL", "gemini-2.0-flash")
 
 # ── Global safety limits (applied to every AI request) ───────────────────────
 # MAX_OUTPUT_TOKENS caps the response size for both Groq and Gemini.

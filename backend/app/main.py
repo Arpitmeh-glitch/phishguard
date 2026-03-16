@@ -169,3 +169,9 @@ async def not_found(request: Request, exc):
 async def server_error(request: Request, exc):
     logger.error(f"Internal server error: {exc}")
     return JSONResponse(status_code=500, content={"detail": str(exc)})
+
+from app.services.threat_intel import initialize_threat_intel
+
+@app.on_event("startup")
+async def startup():
+    url_service.initialize()
