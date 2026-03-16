@@ -32,3 +32,4 @@ build/
 .env.production
 backend/app/services/data/*.csv
 backend/app/services/data/*.txt
+app/services/data/tranco*.csv
