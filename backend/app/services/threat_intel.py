@@ -35,7 +35,7 @@ def load_legitimate_domains():
 
     files = [
         "top-1m.csv",
-        "tranco_L6J4.csv"
+        "tranco_L6j4.csv"
     ]
 
     for fname in files:
