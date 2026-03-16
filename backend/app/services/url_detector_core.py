@@ -53,10 +53,11 @@ MODEL_PATH = os.path.join(BASE_DIR, "model.pkl")
 FEATURE_COUNT = 30   # bump this when adding features to force retraining
 TRAINING_MODE = False
 # Known URL shorteners
+# Known URL shorteners
 URL_SHORTENERS = {
     "bit.ly", "tinyurl.com", "t.co", "goo.gl", "ow.ly", "is.gd",
     "buff.ly", "adf.ly", "short.link", "cutt.ly", "rb.gy", "shorturl.at",
-    "tiny.cc", "shorte.st", "bc.vc", "clk.sh", "0rz.tw",
+    "tiny.cc", "shorte.st", "bc.vc", "clk.sh", "0rz.tw", "youtu.be"
 }
 
 # Suspicious TLDs commonly abused in phishing
@@ -411,10 +412,9 @@ def extract_features_with_reasons(url: str):
     if TRAINING_MODE or os.environ.get("PHISHGUARD_TRAINING") == "1":
         is_legit = False
     else:
-        # Pass the full normalised hostname (not just apex_domain) so that
-        # is_legitimate_domain's internal subdomain-walking can match
-        # e.g. mail.google.com → google.com.  The function handles www. stripping.
-        is_legit = is_legitimate_domain(hostname)
+        # Hardcode major safe shorteners in case threat_intel.py misses them
+        SAFE_SHORTENERS = {"youtu.be", "t.co", "aka.ms", "1drv.ms", "g.co"}
+        is_legit = is_legitimate_domain(hostname) or hostname in SAFE_SHORTENERS
 
     features.append(1 if is_legit else 0)
 
@@ -508,28 +508,34 @@ def load_or_train_model() -> RandomForestClassifier:
     global TRAINING_MODE
     TRAINING_MODE = True
     os.environ["PHISHGUARD_TRAINING"] = "1"
-    if os.path.exists(MODEL_PATH):
-        try:
-            with open(MODEL_PATH, "rb") as f:
-                model = pickle.load(f)
-            # Validate feature count compatibility
-            if getattr(model, "_phishguard_feature_count", None) == FEATURE_COUNT:
-                logger.info(f"📦 Loaded pre-trained model from {MODEL_PATH}")
-                return model
-            else:
-                logger.warning("⚠ Stale model (feature count mismatch) — retraining…")
-                os.remove(MODEL_PATH)
-        except Exception as e:
-            logger.warning(f"⚠ Could not load model ({e}) — retraining…")
-            if os.path.exists(MODEL_PATH):
-                os.remove(MODEL_PATH)
+    
+    try:
+        if os.path.exists(MODEL_PATH):
+            try:
+                with open(MODEL_PATH, "rb") as f:
+                    model = pickle.load(f)
+                # Validate feature count compatibility
+                if getattr(model, "_phishguard_feature_count", None) == FEATURE_COUNT:
+                    logger.info(f"📦 Loaded pre-trained model from {MODEL_PATH}")
+                    return model
+                else:
+                    logger.warning("⚠ Stale model (feature count mismatch) — retraining…")
+                    os.remove(MODEL_PATH)
+            except Exception as e:
+                logger.warning(f"⚠ Could not load model ({e}) — retraining…")
+                if os.path.exists(MODEL_PATH):
+                    os.remove(MODEL_PATH)
 
-    model = _load_and_train()
-    with open(MODEL_PATH, "wb") as f:
-        pickle.dump(model, f)
-    logger.info(f"💾 Model saved to {MODEL_PATH}")
-    TRAINING_MODE = False
-    return model
+        model = _load_and_train()
+        with open(MODEL_PATH, "wb") as f:
+            pickle.dump(model, f)
+        logger.info(f"💾 Model saved to {MODEL_PATH}")
+        return model
+        
+    finally:
+        # BUG FIX: Guarantee training mode flags are destroyed so live scans work!
+        TRAINING_MODE = False
+        os.environ.pop("PHISHGUARD_TRAINING", None)
     
 
 
@@ -600,13 +606,35 @@ def _ml_fallback_reasons(url: str, features: list, phishing_prob: float) -> list
     else:
         top_indices = set(range(len(features)))
 
+    # Map the actual suspicious thresholds for each feature index
+    thresholds = {
+        2: lambda f: f[2] > 75,       # URL length
+        3: lambda f: f[3] > 4,        # Dot count
+        4: lambda f: f[4] > 2,        # Hyphen count
+        7: lambda f: f[7] > 0,        # IP as hostname
+        8: lambda f: f[8] == 0,       # is_https (inverted, 0 means plain HTTP)
+        9: lambda f: f[9] > 0,        # Sensitive words
+        11: lambda f: f[11] > 2,      # Subdomain count
+        12: lambda f: f[12] > 3.8,    # Domain entropy
+        13: lambda f: f[13] > 0,      # Suspicious TLD
+        14: lambda f: f[14] > 0,      # URL shortener
+        15: lambda f: f[15] > 0,      # Brand impersonation
+        16: lambda f: f[16] > 0.3,    # Digit ratio
+        20: lambda f: f[20] > 0,      # Double slash
+        21: lambda f: f[21] > 0,      # Punycode
+        23: lambda f: f[23] > 0,      # Embedded URL
+        24: lambda f: f[24] > 0,      # TLD in path
+        25: lambda f: f[25] > 2,      # Redirects
+        26: lambda f: f[26] > 1,      # Keyword hits
+        27: lambda f: f[27] > 4.2,    # URL entropy
+        28: lambda f: f[28] > 0,      # Typosquatting
+    }
+
     for feat_idx, desc_fn in _FEATURE_META:
-        # Feature 8 (is_https) is inverted: flag=1 means HTTPS (safe), flag=0 means HTTP (suspicious)
-        if feat_idx == 8:
-            triggered = features[feat_idx] == 0
-        else:
-            triggered = features[feat_idx] > 0
-        if feat_idx in top_indices and triggered:
+        # Check against the proper threshold, default to > 0 for booleans
+        is_triggered_fn = thresholds.get(feat_idx, lambda f: f[feat_idx] > 0)
+        
+        if feat_idx in top_indices and is_triggered_fn(features):
             try:
                 reasons.append(desc_fn(url, features))
             except Exception:
@@ -641,30 +669,6 @@ def _rule_score(reasons: list) -> float:
 
 # ── Prediction ────────────────────────────────────────────────────────────────
 def predict_url(url: str) -> dict:
-    """
-    Predict whether a URL is phishing.
-
-    Hybrid scoring:
-        final_prob = (ml_prob * 0.65) + (rule_score * 0.35)
-
-    Classification thresholds:
-        >= 0.65 → PHISHING
-        0.35–0.65 → SUSPICIOUS
-        < 0.35 → SAFE
-
-    Safety guards (applied before classification):
-      1. Legitimate-domain whitelist bypass: if the apex domain is in the
-         top-1M whitelist AND ML probability is below 0.50, the URL is
-         immediately classified SAFE regardless of rule score.  This prevents
-         rule-score inflation from escalating well-known domains.
-      2. ML-floor guard: rule score alone cannot push a URL to PHISHING.
-         If ml_prob < 0.40, the final label is capped at SUSPICIOUS so that
-         a URL with zero ML signal but many incidental rule hits cannot reach
-         the PHISHING tier.
-
-    Returns:
-        label, confidence, risk_tier, reasons, detection_mode
-    """
     if _model is None:
         raise RuntimeError("Model not initialised. Call set_model() first.")
 
@@ -673,6 +677,22 @@ def predict_url(url: str) -> dict:
 
     ml_phishing_prob = float(proba[1])
     ml_safe_prob     = float(proba[0])
+
+    # ── Feature index for is_legit (last feature, index 29) ───────────────────
+    is_legit_flag = bool(features[-1])
+
+    # ── Safety guard 1: Whitelist bypass ──────────────────────────────────────
+    # If the domain is verified legitimate, heavily suppress the ML probability
+    # BEFORE logging it or calculating the hybrid score.
+    if is_legit_flag:
+        is_open_redirect = bool(features[22]) # Feature 23: Embedded URL
+        if not is_open_redirect:
+            ml_phishing_prob = min(ml_phishing_prob, 0.05)
+            ml_safe_prob = 1.0 - ml_phishing_prob
+            # Clear ML-generated fallback reasons since we are overriding it
+            reasons = [r for r in reasons if "High domain entropy" not in r and "High digit ratio" not in r]
+
+    # Now the debug logs will show the accurate, clamped probabilities
     print("\n==== DEBUG URL ANALYSIS ====")
     print("URL:", url)
     print("ML phishing probability:", ml_phishing_prob)
@@ -683,20 +703,15 @@ def predict_url(url: str) -> dict:
     print("Rule score:", _rule_score(reasons))
     print("============================\n")
 
-    # ── Feature index for is_legit (last feature, index 28) ───────────────────
-    is_legit_flag = bool(features[-1])
-
-    # ── Safety guard 1: Whitelist bypass ──────────────────────────────────────
-    # If the domain is in the top-1M list and the ML model itself does not
-    # consider it likely phishing, short-circuit to SAFE immediately.
-    # Threshold 0.50 is intentionally permissive: only override when ML is not
-    # already signalling a strong phishing probability.
-    if is_legit_flag and ml_phishing_prob < 0.9:
+    if is_legit_flag and ml_phishing_prob <= 0.05:
         return {
             "label": "SAFE",
             "confidence": ml_safe_prob,
             "risk_tier": "LOW",
-            "reasons": []
+            "ml_probability": ml_phishing_prob,
+            "rule_score": 0.0,
+            "reasons": ["Verified legitimate domain (ML path analysis bypassed)"],
+            "detection_mode": "whitelist"
         }
 
     # Rule-based overlay

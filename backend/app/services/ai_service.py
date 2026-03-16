@@ -221,31 +221,18 @@ async def explain_threat(context: str) -> Optional[dict]:
     """
     Use Gemini (gemini-1.5-flash) for deep reasoning and human-readable
     explanation of a suspicious domain, message, or file content excerpt.
-
-    Returns:
-        {
-            "summary":      str,
-            "threat_level": "high" | "medium" | "low" | "safe",
-            "explanation":  str
-        }
-        or None if Gemini is unavailable or the call fails.
+    Includes 3 retries with exponential backoff to handle 429 rate limits.
     """
     if not _gemini_available():
         logger.debug("Gemini API key not configured — skipping deep threat explanation")
         return None
 
-    # Keep context short — Gemini 1.5 Flash handles longer context well but
-    # shorter inputs reduce latency and cost
+    # Keep context short
     truncated = context[:4000] if len(context) > 4000 else context
-
     full_prompt = f"{_GEMINI_SYSTEM_PROMPT}\n\nContext to analyse:\n\n{truncated}"
 
     payload = {
-        "contents": [
-            {
-                "parts": [{"text": full_prompt}]
-            }
-        ],
+        "contents": [{"parts": [{"text": full_prompt}]}],
         "generationConfig": {
             "temperature":     0.2,
             "maxOutputTokens": MAX_OUTPUT_TOKENS,
@@ -253,88 +240,57 @@ async def explain_threat(context: str) -> Optional[dict]:
     }
 
     url = f"{GEMINI_URL}?key={settings.GEMINI_API_KEY}"
+    max_retries = 3
 
-    try:
-        async with httpx.AsyncClient(timeout=AI_TIMEOUT_SECONDS) as client:
-            response = await client.post(url, json=payload)
-            response.raise_for_status()
+    for attempt in range(1, max_retries + 1):
+        try:
+            async with httpx.AsyncClient(timeout=AI_TIMEOUT_SECONDS) as client:
+                response = await client.post(url, json=payload)
+                
+                # Handle rate limits explicitly before raising for general status
+                if response.status_code == 429:
+                    logger.warning("Gemini rate limited (429) on attempt %d/%d", attempt, max_retries)
+                    if attempt < max_retries:
+                        await asyncio.sleep(2 ** attempt)
+                        continue
+                    return None
 
-        data = response.json()
-        # Navigate Gemini response structure
-        raw_content = (
-            data.get("candidates", [{}])[0]
-                .get("content", {})
-                .get("parts", [{}])[0]
-                .get("text", "")
-        )
+                response.raise_for_status()
 
-        if not raw_content:
-            logger.warning("Gemini returned empty content")
-            return None
+            data = response.json()
+            raw_content = (
+                data.get("candidates", [{}])[0]
+                    .get("content", {})
+                    .get("parts", [{}])[0]
+                    .get("text", "")
+            )
 
-        parsed = _parse_json_response(raw_content)
+            if not raw_content:
+                logger.warning("Gemini returned empty content")
+                return None
 
-        if parsed is None:
-            logger.warning("Gemini returned non-JSON response: %s", raw_content[:200])
-            return None
+            parsed = _parse_json_response(raw_content)
 
-        # Normalise and validate
-        summary      = str(parsed.get("summary", "")).strip()
-        threat_level = str(parsed.get("threat_level", "low")).lower()
-        explanation  = str(parsed.get("explanation", "")).strip()
+            if parsed is None:
+                logger.warning("Gemini returned non-JSON response: %s", raw_content[:200])
+                return None
 
-        if threat_level not in ("high", "medium", "low", "safe"):
-            threat_level = "low"
+            summary      = str(parsed.get("summary", "")).strip()
+            threat_level = str(parsed.get("threat_level", "low")).lower()
+            explanation  = str(parsed.get("explanation", "")).strip()
 
-        return {
-            "summary":      summary,
-            "threat_level": threat_level,
-            "explanation":  explanation,
-        }
+            if threat_level not in ("high", "medium", "low", "safe"):
+                threat_level = "low"
 
-    except httpx.TimeoutException:
-        logger.warning("Gemini API timed out after %.1f s", AI_TIMEOUT_SECONDS)
-        return None
-    except httpx.HTTPStatusError as exc:
-        logger.warning("Gemini API HTTP error %s: %s", exc.response.status_code, exc.response.text[:200])
-        return None
-    except Exception as exc:
-        logger.warning("Gemini API unexpected error: %s", exc)
-        return None
+            return {
+                "summary":      summary,
+                "threat_level": threat_level,
+                "explanation":  explanation,
+            }
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Convenience wrapper for sync contexts (used in background tasks)
-# ─────────────────────────────────────────────────────────────────────────────
-
-def analyze_text_fast_sync(text: str) -> Optional[dict]:
-    """Synchronous wrapper around analyze_text_fast for use in non-async code."""
-    try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            # We're inside an async event loop — create a new thread-safe future
-            import concurrent.futures
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                future = pool.submit(asyncio.run, analyze_text_fast(text))
-                return future.result(timeout=AI_TIMEOUT_SECONDS + 2)
-        else:
-            return loop.run_until_complete(analyze_text_fast(text))
-    except Exception as exc:
-        logger.warning("analyze_text_fast_sync error: %s", exc)
-        return None
-
-
-def explain_threat_sync(context: str) -> Optional[dict]:
-    """Synchronous wrapper around explain_threat for use in non-async code."""
-    try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            import concurrent.futures
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                future = pool.submit(asyncio.run, explain_threat(context))
-                return future.result(timeout=AI_TIMEOUT_SECONDS + 2)
-        else:
-            return loop.run_until_complete(explain_threat(context))
-    except Exception as exc:
-        logger.warning("explain_threat_sync error: %s", exc)
-        return None
+        except Exception as exc:
+            logger.warning("Gemini API error on attempt %d: %s", attempt, exc)
+            if attempt < max_retries:
+                await asyncio.sleep(2 ** attempt)
+            else:
+                return None

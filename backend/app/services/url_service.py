@@ -77,20 +77,38 @@ _VT_VERDICT_BOOST   = {"malicious": 0.20, "suspicious": 0.08, "clean": 0.0, "unk
 _AI_THREAT_BOOST    = {"high": 0.15, "medium": 0.05, "low": 0.0, "safe": 0.0}
 
 
-def _apply_vt_boost(confidence: float, vt_result: Optional[dict]) -> float:
+def _apply_vt_boost(threat_score: float, vt_result: Optional[dict]) -> float:
     """
-    Boost confidence when VirusTotal reports a malicious or suspicious verdict.
-    The boost is proportional to VT's own confidence so a single-engine flag
-    (low vt confidence) adds less weight than a consensus finding.
+    Adjust threat score based on VirusTotal verdict.
+    Boosts score for malicious/suspicious, and REDUCES score for clean verdicts
+    to save legitimate URLs from overzealous ML flagging.
     """
     if vt_result is None:
-        return confidence
-    verdict     = vt_result.get("verdict", "unknown")
-    vt_conf     = float(vt_result.get("confidence", 0.0))
+        return threat_score
+        
+    verdict = vt_result.get("verdict", "unknown")
+    vt_conf = float(vt_result.get("confidence", 0.0))
+    
+    if verdict == "clean":
+        # Drastically drop the threat score if VT confirms it is a clean domain
+        return round(max(0.0, threat_score - 0.40), 4)
+
     base_boost  = _VT_VERDICT_BOOST.get(verdict, 0.0)
-    # Scale the boost by VT's confidence so partial findings have less impact
     actual_boost = base_boost * (0.5 + vt_conf * 0.5)
-    return round(min(confidence + actual_boost, 1.0), 4)
+    return round(min(threat_score + actual_boost, 1.0), 4)
+
+
+def _reclassify(threat_score: float, current_label: str) -> str:
+    """
+    Re-derive the label from the merged threat score.
+    Allows VT 'clean' verdicts to safely downgrade false positive labels.
+    """
+    if threat_score >= 0.65:
+        return "PHISHING"
+    if threat_score >= 0.35:
+        return "SUSPICIOUS"
+    
+    return "SAFE"
 
 
 def _apply_ai_boost(confidence: float, ai_result: Optional[dict]) -> float:
@@ -103,23 +121,6 @@ def _apply_ai_boost(confidence: float, ai_result: Optional[dict]) -> float:
     boost = _AI_THREAT_BOOST.get(ai_result.get("threat_level", "low"), 0.0)
     return round(min(confidence + boost, 1.0), 4)
 
-
-def _reclassify(confidence: float, current_label: str) -> str:
-    """
-    Re-derive the label from the merged confidence so downstream consumers
-    see a consistent label/confidence pair even after boost layers fire.
-    Only upgrades severity — never downgrades a label that was set by the
-    ML/rule pipeline.
-    """
-    if confidence >= 0.65:
-        return "PHISHING"
-    if confidence >= 0.35:
-        # Upgrade SAFE → SUSPICIOUS if boosted over threshold; never downgrade
-        # PHISHING → SUSPICIOUS
-        if current_label == "SAFE":
-            return "SUSPICIOUS"
-        return current_label
-    return current_label
 
 
 # ── Async pipeline ────────────────────────────────────────────────────────────
@@ -149,10 +150,19 @@ async def scan_url_async(url: str) -> dict:
         logger.error("Unexpected URL scan error: %s", e)
         raise
 
-    current_label   = result.get("label", "SAFE")
-    base_confidence = result.get("confidence", 0.0)
-    ml_prob         = result.get("ml_probability", 0.0)
-    rule_score      = result.get("rule_score", 0.0)
+    current_label       = result.get("label", "SAFE")
+    original_confidence = result.get("confidence", 0.0)
+    ml_prob             = result.get("ml_probability", 0.0)
+    rule_score          = result.get("rule_score", 0.0)
+
+    # ── BUG FIX: Convert label confidence to an internal threat score ──
+    # predict_url returns label confidence (e.g., 0.99 for SAFE).
+    # We need a unified risk score (0.0 to 1.0 where 1.0 is max threat) 
+    # for VT/AI boosts and reclassification.
+    if current_label == "SAFE":
+        current_threat_score = max(0.0, 1.0 - original_confidence)
+    else:
+        current_threat_score = original_confidence
 
     # ── Layer 3: VirusTotal domain reputation ─────────────────────────────
     vt_result: Optional[dict] = None
@@ -167,8 +177,8 @@ async def scan_url_async(url: str) -> dict:
     except Exception as exc:
         logger.warning("VirusTotal layer skipped due to unexpected error: %s", exc)
 
-    # Apply VT boost
-    after_vt_confidence = _apply_vt_boost(base_confidence, vt_result)
+    # Apply VT boost using the normalized threat score
+    after_vt_threat = _apply_vt_boost(current_threat_score, vt_result)
 
     # If VT pushed us over the PHISHING threshold, append a reason
     if vt_result and vt_result.get("verdict") in ("malicious", "suspicious"):
@@ -180,12 +190,18 @@ async def scan_url_async(url: str) -> dict:
             result.setdefault("reasons", []).append(vt_reason)
 
     # Re-classify label after VT boost
-    current_label = _reclassify(after_vt_confidence, current_label)
+    current_label = _reclassify(after_vt_threat, current_label)
 
     # ── Layer 4: Gemini AI deep threat explanation ────────────────────────
-    # Only for non-safe results — saves Gemini quota on clean URLs
     ai_result: Optional[dict] = None
-    if current_label in ("PHISHING", "SUSPICIOUS"):
+    
+    # Calculate safe probability based on the ML phishing probability
+    ml_safe_prob = 1.0 - ml_prob
+    
+    # Bypass AI entirely if the ML model is highly confident in either direction
+    if ml_safe_prob >= 0.95 or ml_prob >= 0.95:
+        logger.info("Skipping AI analysis — ML confidence high")
+    elif current_label in ("PHISHING", "SUSPICIOUS"):
         vt_summary = ""
         if vt_result and vt_result.get("verdict") != "unknown":
             vt_summary = (
@@ -205,16 +221,22 @@ async def scan_url_async(url: str) -> dict:
             logger.warning("Gemini threat explanation skipped: %s", exc)
 
     # ── Final merge ───────────────────────────────────────────────────────
-    final_confidence = _apply_ai_boost(after_vt_confidence, ai_result)
-    final_label      = _reclassify(final_confidence, current_label)
+    final_threat = _apply_ai_boost(after_vt_threat, ai_result)
+    final_label  = _reclassify(final_threat, current_label)
 
-    result["label"]             = final_label
-    result["confidence"]        = final_confidence
-    result["risk_score"]        = _build_risk_score_int(final_confidence)
-    result["vt_result"]         = vt_result         # None when VT unavailable/skipped
-    result["vt_used"]           = vt_result is not None
+    # Convert the internal threat score back to label confidence for the frontend
+    if final_label == "SAFE":
+        final_confidence = max(0.0, 1.0 - final_threat)
+    else:
+        final_confidence = final_threat
+
+    result["label"]              = final_label
+    result["confidence"]         = round(final_confidence, 4)
+    result["risk_score"]         = _build_risk_score_int(final_threat)
+    result["vt_result"]          = vt_result
+    result["vt_used"]            = vt_result is not None
     result["threat_explanation"] = ai_result
-    result["ai_analysis"]        = ai_result        # alias for API consistency
+    result["ai_analysis"]        = ai_result
     result["ai_used"]            = ai_result is not None
 
     return result
@@ -238,7 +260,13 @@ def scan_url(url: str) -> dict:
         logger.warning("scan_url async dispatch failed, falling back to sync core: %s", exc)
         try:
             result = _core.predict_url(url.strip())
-            result["risk_score"]          = _build_risk_score_int(result.get("confidence", 0.0))
+            
+            # ── BUG FIX: Convert label confidence to threat score for sync fallback ──
+            current_label = result.get("label", "SAFE")
+            conf = result.get("confidence", 0.0)
+            threat_score = conf if current_label != "SAFE" else max(0.0, 1.0 - conf)
+            
+            result["risk_score"]          = _build_risk_score_int(threat_score)
             result["vt_result"]           = None
             result["vt_used"]             = False
             result["threat_explanation"]  = None
