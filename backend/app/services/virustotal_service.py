@@ -137,40 +137,28 @@ def _vt_available() -> bool:
     return bool(getattr(settings, "VIRUSTOTAL_API_KEY", None))
 
 
+import tldextract
+
 def _normalise_domain(raw: str) -> str:
     """
-    Extract and normalise the root domain from a URL or bare domain string.
-
-    Examples:
-        "https://sub.example.com/path" → "example.com"
-        "evil.login.paypal-secure.tk"  → "paypal-secure.tk"
-        "192.0.2.1"                    → "192.0.2.1"
+    Extract and normalise the registered root domain using the Public Suffix List.
+    Correctly handles complex TLDs like .gov.in, .co.uk, etc.
     """
     raw = raw.strip().lower()
-    # Strip protocol if present
-    if "://" in raw:
-        try:
-            parsed = urlparse(raw)
-            host = parsed.hostname or raw
-        except Exception:
-            host = raw
-    else:
-        host = raw.split("/")[0].split("?")[0].split("#")[0]
-
-    # Strip port
-    if ":" in host and not host.startswith("["):
-        host = host.rsplit(":", 1)[0]
-
-    # For domains (not IPs), return only the last two labels (root domain).
-    # VT's domain endpoint is keyed on the root domain, not subdomains.
+    
+    # Handle raw IPs
     import re
-    if re.match(r"^\d{1,3}(\.\d{1,3}){3}$", host):
-        return host   # raw IP — return as-is
+    if re.match(r"(?<!\d)(\d{1,3}\.){3}\d{1,3}(?!\d)", raw):
+        # Extract just the IP if it has ports/paths attached
+        match = re.search(r"(\d{1,3}\.){3}\d{1,3}", raw)
+        return match.group(0) if match else raw
 
-    parts = host.rstrip(".").split(".")
-    if len(parts) >= 2:
-        return ".".join(parts[-2:])
-    return host
+    # Extract the registered domain exactly
+    ext = tldextract.extract(raw)
+    if ext.domain and ext.suffix:
+        return f"{ext.domain}.{ext.suffix}"
+        
+    return raw
 
 
 def _cache_get(domain: str) -> Optional[dict]:

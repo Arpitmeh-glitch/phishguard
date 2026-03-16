@@ -128,10 +128,12 @@ def _shannon_entropy(s: str) -> float:
         freq[c] = freq.get(c, 0) + 1
     length = len(s)
     return -sum((v / length) * math.log2(v / length) for v in freq.values())
+import tldextract
+
 def get_apex_domain(hostname: str):
-    parts = hostname.split(".")
-    if len(parts) >= 2:
-        return ".".join(parts[-2:])
+    ext = tldextract.extract(hostname)
+    if ext.domain and ext.suffix:
+        return f"{ext.domain}.{ext.suffix}"
     return hostname
 
 def extract_features_with_reasons(url: str):
