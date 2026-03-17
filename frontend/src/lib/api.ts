@@ -108,6 +108,7 @@ export const scanApi = {
       headers: { "Content-Type": undefined },
     });
   },
+  fileStatus: (fileId: string) => api.get(`/scan/file/${fileId}/status`),
 };
 
 // User
@@ -153,4 +154,10 @@ export const adminApi = {
     if (label) params.label = label;
     return api.get("/admin/scans", { params });
   },
+};
+// Agent endpoints
+export const agentApi = {
+  // These are placeholders. We will update them based on your actual backend routes!
+  list: () => api.get("/agent"),
+  status: (agentId: string) => api.get(`/agent/${agentId}/status`),
 };

@@ -24,7 +24,7 @@ class Settings(BaseSettings):
 
     # Encryption
     ENCRYPTION_KEY: Optional[str] = None  # 32-byte base64 key for AES-256
-
+    OPENROUTER_API_KEY: Optional[str] = None
     # OpenAI (optional)
     OPENAI_API_KEY: Optional[str] = None
     # Google Gemini API

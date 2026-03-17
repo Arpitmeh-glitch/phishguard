@@ -56,28 +56,27 @@ def _build_risk_score_int(final_score: float) -> int:
 # ── Main public function ──────────────────────────────────────────────────────
 
 async def scan_message_async(text: str) -> dict:
-    """
-    Async version of scan_message.  Preferred when called from an async route.
-    """
+    """Async version of scan_message. Preferred when called from an async route."""
+    
+    # Default fallback result in case the core rule/OpenAI engine fails
+    result = {
+        "original_message": text,
+        "language":         "unknown",
+        "rule_score":       0.0,
+        "reasons":          [],
+        "final_score":      0.0,
+        "final_label":      "SAFE",
+        "confidence_level": "low",
+        "api_skipped":      True,
+    }
+
     try:
         # Layer 1 + 2: Rule engine + optional OpenAI
-        result = _core.detect(text.strip())
+        core_result = _core.detect(text.strip())
+        result.update(core_result)
     except Exception as e:
-        logger.error("Message scan (core) error: %s", e)
-        result = {
-            "original_message": text,
-            "language":         "unknown",
-            "rule_score":       0.0,
-            "reasons":          [f"Scan error: {e}"],
-            "final_score":      0.0,
-            "final_label":      "SAFE",
-            "confidence_level": "low",
-            "api_label":        "SAFE",
-            "api_confidence":   0.0,
-            "api_explanation":  "",
-            "api_skipped":      True,
-            "api_error":        str(e),
-        }
+        logger.warning(f"Message scan core/OpenAI error, relying on Groq fallback: {e}")
+        result["reasons"].append("Core scanner bypassed due to failure.")
 
     # Layer 3: Groq fast AI analysis
     ai_result: Optional[dict] = None
@@ -88,42 +87,46 @@ async def scan_message_async(text: str) -> dict:
 
     # Layer 4: Merge scores
     base_score     = result.get("final_score", 0.0)
-    merged_score   = _merge_ai_score(base_score, ai_result)
+    
+    # If the core failed but Groq succeeded, let Groq be the absolute source of truth
+    if base_score == 0.0 and ai_result:
+        merged_score = _RISK_TO_SCORE.get(ai_result.get("risk", "low"), 0.15)
+    else:
+        merged_score = _merge_ai_score(base_score, ai_result)
+        
     risk_score_int = _build_risk_score_int(merged_score)
 
-    # Re-classify label if AI pushed the score over a threshold
-    final_label = result.get("final_label", "SAFE")
-    if merged_score != base_score:
-        if merged_score >= _core.FRAUD_THRESHOLD:
-            final_label = "FRAUD"
-        elif merged_score >= _core.SUSPICIOUS_THRESHOLD:
-            final_label = "SUSPICIOUS"
-        else:
-            final_label = "SAFE"
+    # Re-classify label
+    if merged_score >= 0.70: # Standardized FRAUD threshold
+        final_label = "FRAUD"
+    elif merged_score >= 0.40: # Standardized SUSPICIOUS threshold
+        final_label = "SUSPICIOUS"
+    else:
+        final_label = "SAFE"
 
     result["final_score"]  = merged_score
     result["final_label"]  = final_label
     result["risk_score"]   = risk_score_int
-    result["ai_analysis"]  = ai_result   # None when Groq is unavailable
+    result["ai_analysis"]  = ai_result
     result["ai_used"]      = ai_result is not None
 
     return result
 
-
 def scan_message(text: str) -> dict:
     """
     Synchronous entry point — wraps scan_message_async.
-    Called from file_service (background task) and the scan route.
+    Safe to call from FastAPI background tasks (which run in separate threads).
     """
     try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            import concurrent.futures
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                future = pool.submit(asyncio.run, scan_message_async(text))
-                return future.result(timeout=20)
-        else:
-            return loop.run_until_complete(scan_message_async(text))
+        # asyncio.run() creates a fresh event loop for this background thread
+        return asyncio.run(scan_message_async(text))
+    except RuntimeError as e:
+        # Fallback: If this is accidentally called from a thread that ALREADY has a loop
+        logger.warning(f"Event loop already running, using ThreadPoolExecutor: {e}")
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(asyncio.run, scan_message_async(text))
+            return future.result(timeout=20)
     except Exception as exc:
         logger.warning("scan_message async dispatch failed, falling back to sync core: %s", exc)
         try:
@@ -132,22 +135,17 @@ def scan_message(text: str) -> dict:
             result["ai_analysis"] = None
             result["ai_used"]     = False
             return result
-        except Exception as e:
-            logger.error("Message scan fallback error: %s", e)
+        except Exception as core_exc:
+            logger.error("Message scan fallback error: %s", core_exc)
             return {
                 "original_message": text,
                 "language":         "unknown",
                 "rule_score":       0.0,
-                "reasons":          [f"Scan error: {e}"],
+                "reasons":          [f"Scan error: {core_exc}"],
                 "final_score":      0.0,
                 "final_label":      "SAFE",
-                "confidence_level": "low",
                 "risk_score":       0,
                 "ai_analysis":      None,
                 "ai_used":          False,
-                "api_label":        "SAFE",
-                "api_confidence":   0.0,
-                "api_explanation":  "",
                 "api_skipped":      True,
-                "api_error":        str(e),
             }

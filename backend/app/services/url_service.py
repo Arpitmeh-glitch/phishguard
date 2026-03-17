@@ -244,46 +244,51 @@ async def scan_url_async(url: str) -> dict:
 
 def scan_url(url: str) -> dict:
     """
-    Synchronous entry point — wraps scan_url_async.
-    Used by file_service background tasks and any sync callers.
+    Safe sync wrapper for async scan_url_async.
+    Works in background threads (FastAPI).
     """
+    import asyncio
+
     try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            import concurrent.futures
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                future = pool.submit(asyncio.run, scan_url_async(url))
-                return future.result(timeout=30)
-        else:
-            return loop.run_until_complete(scan_url_async(url))
+        return asyncio.run(scan_url_async(url))
+
+    except RuntimeError as e:
+        # If already inside an event loop (rare case)
+        logger.warning(f"Event loop already running: {e}")
+
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(asyncio.run, scan_url_async(url))
+            return future.result(timeout=30)
+
     except Exception as exc:
-        logger.warning("scan_url async dispatch failed, falling back to sync core: %s", exc)
+        logger.warning(
+            "scan_url async failed, falling back to core: %s", exc
+        )
         try:
             result = _core.predict_url(url.strip())
-            
-            # ── BUG FIX: Convert label confidence to threat score for sync fallback ──
+
             current_label = result.get("label", "SAFE")
             conf = result.get("confidence", 0.0)
+
             threat_score = conf if current_label != "SAFE" else max(0.0, 1.0 - conf)
-            
-            result["risk_score"]          = _build_risk_score_int(threat_score)
-            result["vt_result"]           = None
-            result["vt_used"]             = False
-            result["threat_explanation"]  = None
-            result["ai_analysis"]         = None
-            result["ai_used"]             = False
+
+            result["risk_score"] = _build_risk_score_int(threat_score)
+            result["vt_result"] = None
+            result["vt_used"] = False
+            result["ai_analysis"] = None
+            result["ai_used"] = False
+
             return result
-        except RuntimeError as e:
-            logger.error("URL scan failed: %s", e)
+
+        except Exception as e:
+            logger.error("URL scan fallback failed: %s", e)
             return {
-                "label":              "SAFE",
-                "confidence":         0.0,
-                "risk_score":         0,
-                "reasons":            ["Model not available — scan inconclusive"],
-                "detection_mode":     "error",
-                "vt_result":          None,
-                "vt_used":            False,
-                "threat_explanation": None,
-                "ai_analysis":        None,
-                "ai_used":            False,
+                "label": "SAFE",
+                "confidence": 0.0,
+                "risk_score": 0,
+                "reasons": ["Scan failed"],
+                "vt_result": None,
+                "ai_analysis": None,
+                "ai_used": False,
             }

@@ -20,19 +20,31 @@ same domain — even from different scan requests — return the cached result
 immediately without touching the API. This is the primary mechanism that
 keeps daily usage well within the 500-request budget.
 
-Cache entry shape:
+Cache entry shape (domain):
     {
-        "domain":       str,          # normalised domain that was queried
-        "malicious":    int,          # engines that flagged malicious
-        "suspicious":   int,          # engines that flagged suspicious
-        "harmless":     int,          # engines that flagged harmless
-        "total":        int,          # total engines that responded
-        "reputation":   int,          # VT community reputation score
-        "categories":   list[str],    # vendor-assigned category labels
+        "domain":       str,
+        "malicious":    int,
+        "suspicious":   int,
+        "harmless":     int,
+        "total":        int,
+        "reputation":   int,
+        "categories":   list[str],
         "verdict":      str,          # "malicious"|"suspicious"|"clean"|"unknown"
-        "confidence":   float,        # 0.0–1.0 derived from engine ratio
-        "cached_at":    float,        # time.time() when entry was stored
-        "source":       str,          # "virustotal" always
+        "confidence":   float,
+        "cached_at":    float,
+        "source":       str,          # "virustotal"
+    }
+
+Cache entry shape (file hash):
+    {
+        "sha256":       str,
+        "malicious":    int,
+        "suspicious":   int,
+        "total":        int,
+        "verdict":      str,          # "malicious"|"suspicious"|"clean"|"unknown"
+        "confidence":   float,
+        "cached_at":    float,
+        "source":       str,          # "virustotal_file"
     }
 
 Rate limiting (token-bucket–style via a simple timestamp gate)
@@ -58,7 +70,13 @@ already raised a flag:
   - rule engine score        ≥ VT_RULE_THRESHOLD     (0.30)
   - label is PHISHING or SUSPICIOUS
 
-Calling VT for clearly-safe URLs would waste the daily budget.
+check_file_hash() always queries when a sha256 is provided, subject only to
+the shared rate/budget gate and the 24-hour cache.
+
+Fixes applied (vs previous version):
+  [FIX-8] check_file_hash() added — queries /files/{hash} endpoint so that
+          known malware uploaded as a file is caught by VT even when its
+          hosting domain is clean.
 """
 
 from __future__ import annotations
@@ -81,11 +99,9 @@ logger = logging.getLogger(__name__)
 # Configuration constants
 # ─────────────────────────────────────────────────────────────────────────────
 
-# VirusTotal v3 API base
 VT_API_BASE = "https://www.virustotal.com/api/v3"
 
 # Minimum seconds between successive API calls (enforces 4 req/min limit)
-# 60 s / 4 req = 15 s exactly — we use 15 to be precise, not conservative.
 VT_RATE_LIMIT_SECONDS: float = 15.0
 
 # Maximum calls per calendar day (free-tier hard cap is 500)
@@ -94,24 +110,23 @@ VT_DAILY_BUDGET: int = 480          # 480 < 500 — 20-call safety margin
 # HTTP timeout for VT requests
 VT_HTTP_TIMEOUT: float = 10.0
 
-# How long a cached result stays valid (seconds).  24 h means each unique
-# domain costs at most one API call per day regardless of scan frequency.
+# How long a cached result stays valid (seconds). 24 h = one call per domain/day.
 VT_CACHE_TTL: float = 86_400.0      # 24 hours
 
-# Minimum ML probability that triggers a VT lookup (mirrors SUSPICIOUS threshold
-# from url_detector_core.py: final_prob >= 0.35 → SUSPICIOUS)
+# Minimum ML probability that triggers a VT domain lookup
 VT_ML_THRESHOLD: float = 0.35
 
-# Minimum rule-engine score that triggers a VT lookup
+# Minimum rule-engine score that triggers a VT domain lookup
 VT_RULE_THRESHOLD: float = 0.30
 
-# Malicious-engine ratio above which we consider the domain definitely malicious
+# Malicious-engine ratio thresholds
 VT_MALICIOUS_RATIO_HIGH: float = 0.10   # ≥10% of engines flagged malicious
 VT_MALICIOUS_RATIO_MED:  float = 0.03   # ≥ 3% — suspicious but not definitive
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# In-memory cache  (process lifetime, keyed by normalised root domain)
+# In-memory cache  (process lifetime)
+# Keys: normalised domain strings  OR  "file:<sha256>"
 # ─────────────────────────────────────────────────────────────────────────────
 
 _VT_CACHE: dict[str, dict] = {}
@@ -122,9 +137,9 @@ _VT_CACHE_LOCK = threading.Lock()
 # Rate-limit state  (all mutations must hold _VT_RATE_LOCK)
 # ─────────────────────────────────────────────────────────────────────────────
 
-_VT_LAST_CALL_TIME: float = 0.0          # epoch of the last successful API call
-_VT_DAILY_CALLS:    int   = 0            # count of calls made today
-_VT_DAILY_DATE:     date  = date.min     # date the counter was last reset
+_VT_LAST_CALL_TIME: float = 0.0
+_VT_DAILY_CALLS:    int   = 0
+_VT_DAILY_DATE:     date  = date.min
 _VT_RATE_LOCK = threading.Lock()
 
 
@@ -145,42 +160,38 @@ def _normalise_domain(raw: str) -> str:
     Correctly handles complex TLDs like .gov.in, .co.uk, etc.
     """
     raw = raw.strip().lower()
-    
-    # Handle raw IPs
+
     import re
     if re.match(r"(?<!\d)(\d{1,3}\.){3}\d{1,3}(?!\d)", raw):
-        # Extract just the IP if it has ports/paths attached
         match = re.search(r"(\d{1,3}\.){3}\d{1,3}", raw)
         return match.group(0) if match else raw
 
-    # Extract the registered domain exactly
     ext = tldextract.extract(raw)
     if ext.domain and ext.suffix:
         return f"{ext.domain}.{ext.suffix}"
-        
+
     return raw
 
 
-def _cache_get(domain: str) -> Optional[dict]:
+def _cache_get(key: str) -> Optional[dict]:
     """Return a cached entry if it exists and has not expired; else None."""
     with _VT_CACHE_LOCK:
-        entry = _VT_CACHE.get(domain)
+        entry = _VT_CACHE.get(key)
     if entry is None:
         return None
     age = time.time() - entry.get("cached_at", 0.0)
     if age > VT_CACHE_TTL:
-        # Expired — evict lazily
         with _VT_CACHE_LOCK:
-            _VT_CACHE.pop(domain, None)
+            _VT_CACHE.pop(key, None)
         return None
     return entry
 
 
-def _cache_set(domain: str, result: dict) -> None:
+def _cache_set(key: str, result: dict) -> None:
     """Store a result in the cache with the current timestamp."""
     result["cached_at"] = time.time()
     with _VT_CACHE_LOCK:
-        _VT_CACHE[domain] = result
+        _VT_CACHE[key] = result
 
 
 def _acquire_rate_slot() -> bool:
@@ -190,23 +201,18 @@ def _acquire_rate_slot() -> bool:
 
     Returns True if the caller may proceed with an API call.
     Returns False if the call must be skipped (rate-limited or budget exhausted).
-
-    All state mutations are under a single lock acquisition to prevent two
-    concurrent requests from both slipping through.
     """
     global _VT_LAST_CALL_TIME, _VT_DAILY_CALLS, _VT_DAILY_DATE
 
-    now      = time.time()
-    today    = date.today()
+    now   = time.time()
+    today = date.today()
 
     with _VT_RATE_LOCK:
-        # Reset daily counter if the date has rolled over
         if today != _VT_DAILY_DATE:
             _VT_DAILY_CALLS = 0
             _VT_DAILY_DATE  = today
             logger.debug("VirusTotal daily counter reset for %s", today.isoformat())
 
-        # Check daily budget
         if _VT_DAILY_CALLS >= VT_DAILY_BUDGET:
             logger.warning(
                 "VirusTotal daily budget exhausted (%d/%d calls) — "
@@ -215,54 +221,36 @@ def _acquire_rate_slot() -> bool:
             )
             return False
 
-        # Check per-minute rate (15 s minimum gap)
         elapsed = now - _VT_LAST_CALL_TIME
         if elapsed < VT_RATE_LIMIT_SECONDS:
-            wait_remaining = round(VT_RATE_LIMIT_SECONDS - elapsed, 1)
-            logger.info(
-                "VirusTotal rate limit reached — skipping request "
-                "(%.1f s until next slot, %d/%d daily calls used).",
-                wait_remaining, _VT_DAILY_CALLS, VT_DAILY_BUDGET,
+            logger.debug(
+                "VirusTotal rate limit: %.1f s since last call (min %.1f s) — skipping.",
+                elapsed, VT_RATE_LIMIT_SECONDS,
             )
             return False
 
-        # Slot acquired — update state before releasing the lock
+        # Slot acquired — update state
         _VT_LAST_CALL_TIME = now
         _VT_DAILY_CALLS   += 1
-        logger.debug(
-            "VirusTotal rate slot acquired (daily: %d/%d, last_call=%.1f s ago).",
-            _VT_DAILY_CALLS, VT_DAILY_BUDGET, elapsed,
-        )
         return True
 
 
 def _parse_vt_response(domain: str, data: dict) -> dict:
-    """
-    Parse a VirusTotal v3 /domains/{domain} API response into a normalised
-    result dict.  Never raises — falls back to safe defaults on any key error.
-    """
+    """Parse a VirusTotal v3 /domains/{domain} JSON response into a normalised dict."""
     try:
-        attrs  = data.get("data", {}).get("attributes", {})
-        stats  = attrs.get("last_analysis_stats", {})
+        attrs = data["data"]["attributes"]
+        stats = attrs.get("last_analysis_stats", {})
 
-        malicious  = int(stats.get("malicious",  0))
-        suspicious = int(stats.get("suspicious", 0))
-        harmless   = int(stats.get("harmless",   0))
-        undetected = int(stats.get("undetected", 0))
-        timeout_n  = int(stats.get("timeout",    0))
-        total      = malicious + suspicious + harmless + undetected + timeout_n
+        malicious  = stats.get("malicious",  0)
+        suspicious = stats.get("suspicious", 0)
+        harmless   = stats.get("harmless",   0)
+        undetected = stats.get("undetected", 0)
+        total      = malicious + suspicious + harmless + undetected
 
-        reputation = int(attrs.get("reputation", 0))
+        reputation = attrs.get("reputation", 0)
+        categories = list(attrs.get("categories", {}).values())
 
-        # Flatten vendor-assigned category strings
-        raw_categories: dict = attrs.get("categories", {})
-        categories = sorted(set(raw_categories.values()))
-
-        # Derive a verdict from the engine ratio
-        if total > 0:
-            mal_ratio = (malicious + suspicious) / total
-        else:
-            mal_ratio = 0.0
+        mal_ratio = malicious / total if total else 0.0
 
         if malicious >= 3 or mal_ratio >= VT_MALICIOUS_RATIO_HIGH:
             verdict    = "malicious"
@@ -271,7 +259,6 @@ def _parse_vt_response(domain: str, data: dict) -> dict:
             verdict    = "suspicious"
             confidence = min(0.6, 0.3 + mal_ratio * 3)
         elif reputation < -5:
-            # Negative community score even when engines don't flag it
             verdict    = "suspicious"
             confidence = 0.25
         else:
@@ -313,7 +300,7 @@ def _unknown_result(domain: str) -> dict:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Public API
+# Public API — domain reputation
 # ─────────────────────────────────────────────────────────────────────────────
 
 async def check_domain(
@@ -325,30 +312,14 @@ async def check_domain(
     """
     Query VirusTotal for the reputation of *domain*.
 
-    Caller contract
-    ---------------
-    Returns a result dict (see cache entry shape at top of module) when VT was
-    consulted (either from cache or a fresh API call).
-    Returns None when:
-      - VIRUSTOTAL_API_KEY is not configured
-      - the domain does not meet the triggering thresholds (safe URLs skipped)
-      - the rate limit or daily budget is exhausted (skipped, not an error)
-      - the API call fails for any reason (graceful degradation)
-
-    The caller must treat None as "no VT data available" and continue normally.
-
-    Parameters
-    ----------
-    domain         : raw domain / URL string — normalised internally
-    ml_probability : ML phishing probability from url_detector_core (0–1)
-    rule_score     : rule-engine overlay score from url_detector_core (0–1)
-    label          : classification label from the ML/rule pipeline
+    Returns a result dict when VT was consulted (cache or fresh call).
+    Returns None when key absent, below triggering thresholds, rate-limited,
+    or the API call fails.
     """
     if not _vt_available():
         logger.debug("VIRUSTOTAL_API_KEY not configured — skipping VT check")
         return None
 
-    # ── Triggering gate: skip clearly safe URLs ────────────────────────────
     is_suspicious = (
         label in ("PHISHING", "SUSPICIOUS")
         or ml_probability >= VT_ML_THRESHOLD
@@ -366,7 +337,6 @@ async def check_domain(
     if not normalised:
         return None
 
-    # ── Cache lookup ───────────────────────────────────────────────────────
     cached = _cache_get(normalised)
     if cached is not None:
         age_min = round((time.time() - cached["cached_at"]) / 60, 1)
@@ -377,11 +347,9 @@ async def check_domain(
         )
         return cached
 
-    # ── Rate-limit gate ────────────────────────────────────────────────────
     if not _acquire_rate_slot():
-        return None   # logged inside _acquire_rate_slot
+        return None
 
-    # ── API call ───────────────────────────────────────────────────────────
     url     = f"{VT_API_BASE}/domains/{normalised}"
     headers = {
         "x-apikey":   settings.VIRUSTOTAL_API_KEY,
@@ -389,28 +357,21 @@ async def check_domain(
         "User-Agent": "PhishGuard/2.0 threat-intel",
     }
 
-    logger.info("VirusTotal check performed for domain '%s'.", normalised)
+    logger.info("VirusTotal domain check performed for '%s'.", normalised)
 
     try:
         async with httpx.AsyncClient(timeout=VT_HTTP_TIMEOUT) as client:
             response = await client.get(url, headers=headers)
 
         if response.status_code == 404:
-            # Domain not in VT database — treat as unknown, cache so we
-            # don't waste future calls on the same unknown domain
-            logger.info(
-                "VirusTotal: domain '%s' not found in database (404).",
-                normalised,
-            )
+            logger.info("VirusTotal: domain '%s' not found in database (404).", normalised)
             result = _unknown_result(normalised)
             _cache_set(normalised, result)
             return result
 
         if response.status_code == 429:
             logger.warning(
-                "VirusTotal rate limit hit (429) for '%s' — "
-                "request skipped, continuing without VT data.",
-                normalised,
+                "VirusTotal rate limit hit (429) for '%s' — skipping.", normalised,
             )
             return None
 
@@ -420,20 +381,15 @@ async def check_domain(
         _cache_set(normalised, result)
 
         logger.info(
-            "VirusTotal result for '%s': verdict=%s, malicious=%d/%d engines, "
-            "reputation=%d.",
-            normalised,
-            result["verdict"],
-            result["malicious"],
-            result["total"],
-            result["reputation"],
+            "VirusTotal result for '%s': verdict=%s, malicious=%d/%d, reputation=%d.",
+            normalised, result["verdict"], result["malicious"],
+            result["total"], result["reputation"],
         )
         return result
 
     except httpx.TimeoutException:
         logger.warning(
-            "VirusTotal request timed out after %.1f s for '%s' — "
-            "skipping, scan continues without VT data.",
+            "VirusTotal request timed out after %.1f s for '%s'.",
             VT_HTTP_TIMEOUT, normalised,
         )
         return None
@@ -446,12 +402,152 @@ async def check_domain(
         return None
 
     except Exception as exc:
+        logger.warning("VirusTotal unexpected error for '%s': %s — skipping.", normalised, exc)
+        return None
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Public API — file hash lookup  [FIX-8]
+# ─────────────────────────────────────────────────────────────────────────────
+
+async def check_file_hash(sha256: str) -> Optional[dict]:
+    """
+    Query VirusTotal v3 /files/{sha256} for a file reputation report.
+
+    [FIX-8] Previously, VT was only consulted for domain names extracted from
+    URLs inside the file. A file containing known malware hosted behind a clean
+    domain was never caught by VT. This endpoint checks the file itself.
+
+    Returns a result dict on cache hit or successful API call.
+    Returns None when:
+      - VIRUSTOTAL_API_KEY not configured
+      - hash not found in VT database (404) — treated as unknown, not clean
+      - rate-limited or daily budget exhausted
+      - API call fails for any reason
+
+    Cache key: "file:<sha256>"  (separate namespace from domain cache)
+    """
+    if not _vt_available():
+        return None
+
+    if not sha256 or len(sha256) != 64:
+        logger.debug("check_file_hash: invalid sha256 '%s' — skipping", sha256)
+        return None
+
+    cache_key = f"file:{sha256}"
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        logger.info(
+            "VirusTotal file cache hit for sha256 %s... (verdict=%s)",
+            sha256[:12], cached["verdict"],
+        )
+        return cached
+
+    if not _acquire_rate_slot():
+        return None
+
+    url     = f"{VT_API_BASE}/files/{sha256}"
+    headers = {
+        "x-apikey":   settings.VIRUSTOTAL_API_KEY,
+        "Accept":     "application/json",
+        "User-Agent": "PhishGuard/2.0 threat-intel",
+    }
+
+    logger.info("VirusTotal file hash check for sha256 %s...", sha256[:12])
+
+    try:
+        async with httpx.AsyncClient(timeout=VT_HTTP_TIMEOUT) as client:
+            response = await client.get(url, headers=headers)
+
+        if response.status_code == 404:
+            # File not in VT database — unknown, not confirmed clean.
+            # Cache the unknown result so we don't waste budget re-checking
+            # every time the same file is uploaded.
+            logger.info("VirusTotal: file sha256 %s... not in database (404).", sha256[:12])
+            result = {
+                "sha256":     sha256,
+                "malicious":  0,
+                "suspicious": 0,
+                "total":      0,
+                "verdict":    "unknown",
+                "confidence": 0.0,
+                "source":     "virustotal_file",
+            }
+            _cache_set(cache_key, result)
+            return result
+
+        if response.status_code == 429:
+            logger.warning("VirusTotal rate limit hit (429) on file hash check — skipping.")
+            return None
+
+        response.raise_for_status()
+
+        data  = response.json()
+        attrs = data["data"]["attributes"]
+        stats = attrs.get("last_analysis_stats", {})
+
+        malicious  = stats.get("malicious",  0)
+        suspicious = stats.get("suspicious", 0)
+        harmless   = stats.get("harmless",   0)
+        undetected = stats.get("undetected", 0)
+        total      = malicious + suspicious + harmless + undetected
+
+        mal_ratio = malicious / total if total else 0.0
+
+        # Verdict thresholds for files are tighter than for domains because
+        # a file hash match is a direct indicator, not a reputation proxy.
+        if malicious >= 3 or mal_ratio >= 0.05:
+            verdict    = "malicious"
+            confidence = round(min(0.95, 0.6 + mal_ratio * 2), 4)
+        elif (malicious + suspicious) >= 2:
+            verdict    = "suspicious"
+            confidence = round(min(0.65, 0.35 + mal_ratio * 3), 4)
+        else:
+            verdict    = "clean"
+            confidence = 0.0
+
+        result = {
+            "sha256":     sha256,
+            "malicious":  malicious,
+            "suspicious": suspicious,
+            "total":      total,
+            "verdict":    verdict,
+            "confidence": confidence,
+            "source":     "virustotal_file",
+        }
+        _cache_set(cache_key, result)
+
+        logger.info(
+            "VirusTotal file result for sha256 %s...: verdict=%s, malicious=%d/%d.",
+            sha256[:12], verdict, malicious, total,
+        )
+        return result
+
+    except httpx.TimeoutException:
         logger.warning(
-            "VirusTotal unexpected error for '%s': %s — skipping.",
-            normalised, exc,
+            "VirusTotal file hash request timed out after %.1f s for sha256 %s...",
+            VT_HTTP_TIMEOUT, sha256[:12],
         )
         return None
 
+    except httpx.HTTPStatusError as exc:
+        logger.warning(
+            "VirusTotal HTTP error %s on file hash check for sha256 %s...: %s",
+            exc.response.status_code, sha256[:12], exc.response.text[:120],
+        )
+        return None
+
+    except Exception as exc:
+        logger.warning(
+            "VirusTotal unexpected error on file hash check for sha256 %s...: %s",
+            sha256[:12], exc,
+        )
+        return None
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Observability
+# ─────────────────────────────────────────────────────────────────────────────
 
 def get_cache_stats() -> dict:
     """
@@ -467,17 +563,17 @@ def get_cache_stats() -> dict:
 
     with _VT_CACHE_LOCK:
         cache_size = len(_VT_CACHE)
-        # Count only non-expired entries
         now = time.time()
-        live_entries = sum(
-            1 for e in _VT_CACHE.values()
-            if (now - e.get("cached_at", 0)) <= VT_CACHE_TTL
-        )
+        live_entries      = sum(1 for e in _VT_CACHE.values() if (now - e.get("cached_at", 0)) <= VT_CACHE_TTL)
+        domain_entries    = sum(1 for k in _VT_CACHE if not k.startswith("file:"))
+        file_hash_entries = sum(1 for k in _VT_CACHE if k.startswith("file:"))
 
     return {
-        "available":          _vt_available(),
+        "available":           _vt_available(),
         "cache_total_entries": cache_size,
         "cache_live_entries":  live_entries,
+        "cache_domain_entries": domain_entries,
+        "cache_file_entries":  file_hash_entries,
         "cache_ttl_hours":     VT_CACHE_TTL / 3600,
         "daily_calls_used":    daily_calls,
         "daily_budget":        VT_DAILY_BUDGET,

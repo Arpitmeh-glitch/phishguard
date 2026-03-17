@@ -35,7 +35,7 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 # ── Model identifiers ─────────────────────────────────────────────────────────
-GROQ_MODEL   = "llama3-70b-8192"
+GROQ_MODEL   = "llama-3.3-70b-versatile"
 GEMINI_MODEL = getattr(settings, "GEMINI_MODEL", "gemini-2.0-flash")
 
 # ── Global safety limits (applied to every AI request) ───────────────────────

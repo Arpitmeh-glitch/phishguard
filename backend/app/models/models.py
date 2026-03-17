@@ -78,6 +78,8 @@ class FileUpload(Base):
     mime_type = Column(String(100), nullable=False)
     encryption_iv = Column(String(64), nullable=False)  # AES-256 IV
     scan_status = Column(String(50), default="pending")  # pending/processing/done/error
+    progress = Column(Integer, default=0)                # 0 to 100
+    status_message = Column(String(255), nullable=True)
     urls_found = Column(Integer, default=0)
     messages_found = Column(Integer, default=0)
     threats_found = Column(Integer, default=0)

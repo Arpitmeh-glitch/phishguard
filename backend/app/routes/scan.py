@@ -9,6 +9,11 @@ Security improvements vs original:
   [H4]  File content validated via magic bytes (not just Content-Type header).
   [H2]  Input trimmed before passing to ML models.
 
+Fixes applied (vs previous version):
+  [FIX-7] SUSPICIOUS label now persisted to DB for URL scans (was silently -> SAFE).
+  [FIX-8] process_file_scan no longer receives the request DB session —
+          the background task opens its own session (thread-safe).
+
 Rate limits:
   - /scan/url     : 20/min per user
   - /scan/message : 20/min per user
@@ -22,7 +27,7 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Backgro
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models.models import User, Scan, ScanType, ScanLabel
+from app.models.models import User, Scan, ScanType, ScanLabel, FileUpload
 from app.schemas.schemas import (
     URLScanRequest, URLScanResponse,
     MessageScanRequest, MessageScanResponse,
@@ -78,7 +83,14 @@ async def scan_url(
 
     result = await url_service.scan_url_async(safe_url)
 
-    label_map = {"PHISHING": ScanLabel.phishing, "SAFE": ScanLabel.safe}
+    # [FIX-7] SUSPICIOUS is now persisted correctly.
+    # Previously only PHISHING and SAFE were mapped; a SUSPICIOUS result was
+    # silently stored as SAFE in the DB even though the API response was correct.
+    label_map = {
+        "PHISHING":   ScanLabel.phishing,
+        "SUSPICIOUS": ScanLabel.suspicious,
+        "SAFE":       ScanLabel.safe,
+    }
     scan = Scan(
         user_id=current_user.id,
         scan_type=ScanType.url,
@@ -87,6 +99,8 @@ async def scan_url(
         confidence=result["confidence"],
         reasons=json.dumps(result.get("reasons", [])),
         detection_mode=result.get("detection_mode"),
+        rule_score=result.get("rule_score"),
+        final_score=result.get("confidence"),
     )
     db.add(scan)
     db.commit()
@@ -131,9 +145,9 @@ async def scan_message(
 
     fl = result.get("final_label", "SAFE")
     label_map = {
-        "FRAUD": ScanLabel.fraud,
+        "FRAUD":      ScanLabel.fraud,
         "SUSPICIOUS": ScanLabel.suspicious,
-        "SAFE": ScanLabel.safe,
+        "SAFE":       ScanLabel.safe,
     }
 
     scan = Scan(
@@ -193,29 +207,25 @@ async def scan_file(
     - Rate-limited to 5/min per user (CPU-intensive background job).
     - [H4] Magic-byte content validation (not just Content-Type header).
     - [C6] SHA-256 hash logged for auditability.
+    - [FIX-8] Background task receives only IDs, not the live DB session.
     - Max file size: 10 MB.
     """
     try:
         file_record, sha256 = await save_encrypted_file(file, str(current_user.id), db)
     except HTTPException:
-        # Re-raise HTTPExceptions from save_encrypted_file as-is.
-        # These are intentional errors with correct status codes:
-        #   400 → validation failures (bad MIME type, magic bytes, empty file)
-        #   413 → file too large
-        #   500 → server-side I/O / misconfiguration errors
         raise
     except Exception as exc:
-        # Unexpected exceptions (not raised by us) are server errors, not
-        # client errors.  Using 400 here was misleading — the upload was
-        # well-formed; something inside the server failed.
         logger.error("Unexpected error saving uploaded file: %s", exc, exc_info=True)
         raise HTTPException(status_code=500, detail="Unexpected server error during file processing.")
 
+    # [FIX-8] Do NOT pass `db` into the background task.
+    # SQLAlchemy sessions are not thread-safe. process_file_scan now opens
+    # its own session internally via SessionLocal().
     background_tasks.add_task(
         process_file_scan,
         str(file_record.id),
         str(current_user.id),
-        db,
+        # db intentionally omitted
     )
 
     log_action(
@@ -236,3 +246,87 @@ async def scan_file(
         status="processing",
         message="File uploaded successfully. Background scan has started.",
     )
+
+
+@router.get("/file/{file_id}/status")
+async def get_file_scan_status(
+    file_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_user),
+):
+    """
+    Fetch the real-time progress of a background file scan.
+
+    When status == "done", the response is enriched with the final verdict
+    from the master meta_scan record written by process_file_scan:
+      - result_label  : "SAFE" | "SUSPICIOUS" | "PHISHING" | "FRAUD"
+      - result_reasons: list[str]  — human-readable findings
+      - confidence    : float
+      - threats_found : int
+      - urls_found    : int
+      - messages_found: int
+    """
+    try:
+        from uuid import UUID
+        file_uuid = UUID(file_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid File ID format")
+
+    file_record = (
+        db.query(FileUpload)
+        .filter(FileUpload.id == file_uuid, FileUpload.user_id == current_user.id)
+        .first()
+    )
+    if not file_record:
+        raise HTTPException(status_code=404, detail="File not found")
+
+    response: dict = {
+        "file_id":   str(file_record.id),
+        "status":    file_record.scan_status,
+        "progress":  file_record.progress,
+        "message":   file_record.status_message,
+    }
+
+    # Only attach the rich result payload once the background job is finished.
+    if file_record.scan_status == "done":
+        # The background worker writes exactly one Scan row with:
+        #   scan_type  = ScanType.file
+        #   input_data = "[FILE ANALYSIS] <original_filename>"
+        #   user_id    = current_user.id
+        # We order by created_at DESC so if re-scans ever happen we get the freshest one.
+        meta_scan = (
+            db.query(Scan)
+            .filter(
+                Scan.user_id    == current_user.id,
+                Scan.scan_type  == ScanType.file,
+                Scan.input_data == f"[FILE ANALYSIS] {file_record.original_filename}",
+            )
+            .order_by(Scan.created_at.desc())
+            .first()
+        )
+
+        if meta_scan:
+            # Normalise the stored ScanLabel enum to an uppercase string the
+            # frontend can switch on directly (matches existing label conventions).
+            label_display_map = {
+                ScanLabel.safe:       "SAFE",
+                ScanLabel.suspicious: "SUSPICIOUS",
+                ScanLabel.phishing:   "PHISHING",
+                ScanLabel.fraud:      "FRAUD",
+            }
+
+            reasons: list[str] = []
+            if meta_scan.reasons:
+                try:
+                    reasons = json.loads(meta_scan.reasons)
+                except (json.JSONDecodeError, TypeError):
+                    reasons = [meta_scan.reasons]
+
+            response["result_label"]   = label_display_map.get(meta_scan.label, "SAFE")
+            response["result_reasons"] = reasons
+            response["confidence"]     = meta_scan.confidence
+            response["threats_found"]  = file_record.threats_found or 0
+            response["urls_found"]     = file_record.urls_found or 0
+            response["messages_found"] = file_record.messages_found or 0
+
+    return response

@@ -374,9 +374,10 @@ def call_openai_api(text: str) -> dict:
     if not OPENAI_AVAILABLE:
         return {"label": "Unknown", "confidence": 0.0, "explanation": "OpenAI not installed.", "error": "openai missing"}
 
-    api_key = os.getenv("OPENAI_API_KEY")
+    # 1. Look for the OpenRouter key instead
+    api_key = os.getenv("OPENROUTER_API_KEY")
     if not api_key:
-        return {"label": "Unknown", "confidence": 0.0, "explanation": "No API key.", "error": "OPENAI_API_KEY not set"}
+        return {"label": "Unknown", "confidence": 0.0, "explanation": "No API key.", "error": "OPENROUTER_API_KEY not set"}
 
     system_prompt = (
         "You are a fraud and phishing detection expert. "
@@ -391,9 +392,13 @@ def call_openai_api(text: str) -> dict:
     )
 
     try:
-        client = OpenAI(api_key=api_key)
+        # 2. Redirect the client to OpenRouter
+        client = OpenAI(
+            base_url="https://openrouter.ai/api/v1",
+            api_key=api_key,
+        )
         response = client.chat.completions.create(
-            model="gpt-4o-mini",
+            model="nvidia/nemotron-3-super-120b-a12b:free", # 3. Insert the model string from your screenshot
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user",   "content": f"Message:\n\n{text}"},
@@ -411,8 +416,6 @@ def call_openai_api(text: str) -> dict:
         return {"label": label, "confidence": round(confidence, 4), "explanation": explanation, "error": None}
     except Exception as e:
         return {"label": "Unknown", "confidence": 0.0, "explanation": "API call failed.", "error": str(e)}
-
-
 # ── Hybrid Scoring ─────────────────────────────────────────────────────────────
 def combine_scores(rule_result: dict, api_result: Optional[dict]) -> dict:
     """
