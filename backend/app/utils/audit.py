@@ -26,13 +26,8 @@ def log_action(
             parsed_user_id = uuid.UUID(user_id) if isinstance(user_id, str) else user_id
 
         # Convert resource_id to UUID as well, just in case that column is also a UUID type
-        parsed_resource_id = None
-        if resource_id:
-            try:
-                parsed_resource_id = uuid.UUID(str(resource_id))
-            except ValueError:
-                # Fallback to string if it's not a valid UUID format
-                parsed_resource_id = str(resource_id)
+        # Force resource_id to be a string since models.py defines it as String(100)
+        parsed_resource_id = str(resource_id) if resource_id else None
 
         entry = AuditLog(
             user_id=parsed_user_id,
