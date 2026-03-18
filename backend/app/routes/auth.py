@@ -183,22 +183,41 @@ def logout(request: Request, db: Session = Depends(get_db), current_user: User =
 def refresh(payload: RefreshRequest, db: Session = Depends(get_db)):
     try:
         token_data = decode_token(payload.refresh_token)
+
         if token_data.get("type") != "refresh":
             raise HTTPException(status_code=401, detail="Invalid token type")
+
     except Exception:
         raise HTTPException(status_code=401, detail="Invalid or expired refresh token")
 
+    import uuid
+
+    # ✅ FIX 1: Extract user_id from token
+    user_id = token_data.get("sub")
+
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Invalid token payload")
+
+    # ✅ FIX 2: Convert to UUID safely
+    try:
+        user_uuid = uuid.UUID(str(user_id))
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid user ID")
+
+    # ✅ FIX 3: Correct query (comma + no double conversion)
     user = db.query(User).filter(
-        User.id == token_data["sub"],
-        User.is_active == True,
+        User.id == user_uuid,
+        User.is_active == True
     ).first()
+
     if not user:
         raise HTTPException(status_code=401, detail="User not found")
 
-    access_token  = create_access_token({
+    access_token = create_access_token({
         "sub": str(user.id),
         "role": user.role.value if hasattr(user.role, "value") else str(user.role),
     })
+
     new_refresh = create_refresh_token({"sub": str(user.id)})
 
     return TokenResponse(
