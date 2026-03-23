@@ -1,11 +1,10 @@
 import axios from "axios";
 
-// ✅ FIX 1: Clean base URL (remove trailing slash if exists)
-const rawBase = (process.env.NEXT_PUBLIC_API_URL ?? "").replace(/\/$/, "");
+// ✅ Clean base URL (remove trailing slash if exists)
+const BASE_URL = (process.env.NEXT_PUBLIC_API_URL ?? "").replace(/\/$/, "");
 
-// ✅ FIX 2: Always use full backend path explicitly
 export const api = axios.create({
-  baseURL: rawBase, // e.g. https://...railway.app OR http://127.0.0.1:8000
+  baseURL: BASE_URL,
   headers: { "Content-Type": "application/json" },
   withCredentials: false,
 });
@@ -45,7 +44,7 @@ api.interceptors.response.use(
         if (!refreshToken) throw new Error("No refresh token");
 
         const { data } = await axios.post(
-          `${rawBase}/api/v1/auth/refresh`,
+          `${BASE_URL}/api/v1/auth/refresh`,
           { refresh_token: refreshToken }
         );
 
@@ -67,7 +66,7 @@ api.interceptors.response.use(
 );
 
 // ─────────────────────────────────────────
-// Auth (✅ FIXED PATHS)
+// Auth
 // ─────────────────────────────────────────
 
 export const authApi = {
@@ -90,84 +89,112 @@ export const authApi = {
 
   me: () => api.get("/api/v1/auth/me"),
 };
+
+// ─────────────────────────────────────────
 // Scans
+// ─────────────────────────────────────────
+
 export const scanApi = {
-  url: (url: string) => api.post("/scan/url", { url }),
-  message: (message: string) => api.post("/scan/message", { message }),
+  url: (url: string) =>
+    api.post("/api/v1/scan/url", { url }),
+
+  message: (message: string) =>
+    api.post("/api/v1/scan/message", { message }),
+
   file: (file: File) => {
     const fd = new FormData();
     fd.append("file", file);
-    // WHY we delete Content-Type here:
-    //
-    // The axios instance is created with a default
-    //   headers: { "Content-Type": "application/json" }
-    // That default survives into every request's config.headers object,
-    // even for FormData bodies.  axios's automatic multipart detection
-    // only strips Content-Type from per-request headers, not from
-    // instance-level defaults that have already been merged in.
-    //
-    // The request interceptor above (line ~36) receives a config whose
-    // headers already contain "Content-Type: application/json", so it
-    // returns that header intact — and FastAPI sees the wrong content
-    // type, cannot find the 'file' form field, and responds HTTP 422.
-    //
-    // Passing `headers: { "Content-Type": undefined }` in the per-request
-    // config overrides the instance default for this call only, which lets
-    // the browser set `multipart/form-data; boundary=<...>` automatically.
-    return api.post("/scan/file", fd, {
+
+    return api.post("/api/v1/scan/file", fd, {
       headers: { "Content-Type": undefined },
     });
   },
-  fileStatus: (fileId: string) => api.get(`/scan/file/${fileId}/status`),
+
+  fileStatus: (fileId: string) =>
+    api.get(`/api/v1/scan/file/${fileId}/status`),
 };
 
+// ─────────────────────────────────────────
 // User
+// ─────────────────────────────────────────
+
 export const userApi = {
   history: (page = 1, per_page = 20, scan_type?: string) => {
     const params: Record<string, unknown> = { page, per_page };
     if (scan_type) params.scan_type = scan_type;
-    return api.get("/user/history", { params });
+
+    return api.get("/api/v1/user/history", { params });
   },
-  profile: () => api.get("/user/profile"),
-  stats: () => api.get("/user/stats"),
+
+  profile: () => api.get("/api/v1/user/profile"),
+  stats: () => api.get("/api/v1/user/stats"),
 };
 
+// ─────────────────────────────────────────
 // Threat Detection
-export const threatApi = {
-  // Single-domain threat analysis (unchanged)
-  analyze: (domain: string, port?: number, ip?: string) =>
-    api.post("/threat/analyze", { domain, port, ip }),
+// ─────────────────────────────────────────
 
-  // Network scanner — replaces the old /threat/live endpoint
-  networkScan: () => api.get("/threat/network-scan"),
+export const threatApi = {
+  analyze: (domain: string, port?: number, ip?: string) =>
+    api.post("/api/v1/threat/analyze", { domain, port, ip }),
+
+  networkScan: () =>
+    api.get("/api/v1/threat/network-scan"),
 };
 
+// ─────────────────────────────────────────
 // Admin
+// ─────────────────────────────────────────
+
 export const adminApi = {
-  stats: () => api.get("/admin/stats"),
+  stats: () => api.get("/api/v1/admin/stats"),
+
   users: (page = 1, per_page = 20, params?: Record<string, unknown>) =>
-    api.get("/admin/users", { params: { page, per_page, ...params } }),
-  createUser: (data: { email: string; username: string; password: string; role: string }) =>
-    api.post("/admin/users", data),
+    api.get("/api/v1/admin/users", {
+      params: { page, per_page, ...params },
+    }),
+
+  createUser: (data: {
+    email: string;
+    username: string;
+    password: string;
+    role: string;
+  }) =>
+    api.post("/api/v1/admin/users", data),
+
   deleteUser: (userId: string) =>
-    api.delete(`/admin/users/${userId}`),
+    api.delete(`/api/v1/admin/users/${userId}`),
+
   updateRole: (userId: string, role: string) =>
-    api.patch(`/admin/users/${userId}/role`, { role }),
+    api.patch(`/api/v1/admin/users/${userId}/role`, { role }),
+
   toggleUser: (userId: string) =>
-    api.patch(`/admin/users/${userId}/toggle`),
+    api.patch(`/api/v1/admin/users/${userId}/toggle`),
+
   resetPassword: (userId: string, new_password: string) =>
-    api.post(`/admin/users/${userId}/reset-password`, { new_password }),
+    api.post(`/api/v1/admin/users/${userId}/reset-password`, {
+      new_password,
+    }),
+
   logs: (page = 1, params?: Record<string, unknown>) =>
-    api.get("/admin/logs", { params: { page, per_page: 50, ...params } }),
+    api.get("/api/v1/admin/logs", {
+      params: { page, per_page: 50, ...params },
+    }),
+
   scans: (page = 1, label?: string) => {
     const params: Record<string, unknown> = { page };
     if (label) params.label = label;
-    return api.get("/admin/scans", { params });
+
+    return api.get("/api/v1/admin/scans", { params });
   },
 };
-// Agent endpoints
+
+// ─────────────────────────────────────────
+// Agent
+// ─────────────────────────────────────────
+
 export const agentApi = {
-  // These are placeholders. We will update them based on your actual backend routes!
-  list: () => api.get("/agent"),
-  status: (agentId: string) => api.get(`/agent/${agentId}/status`),
+  list: () => api.get("/api/v1/agent"),
+  status: (agentId: string) =>
+    api.get(`/api/v1/agent/${agentId}/status`),
 };
