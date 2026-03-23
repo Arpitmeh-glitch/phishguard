@@ -1,36 +1,24 @@
 import axios from "axios";
 
-// FIX: The API base URL must NOT include /api/v1 when using docker-compose
-// because next.config.js rewrites /api/* → backend:8000/api/* already.
-// Previously docker-compose set NEXT_PUBLIC_API_URL=/api/v1 and api.ts
-// appended /api/v1 again → requests hit /api/v1/api/v1/... (404).
-//
-// New logic:
-//   - In docker/nginx (env var = empty or not set): use "" so all calls go
-//     through the Next.js rewrite proxy (relative URLs → /api/v1/...)
-//   - With explicit Railway URL: use it directly, and do NOT re-append /api/v1
-const rawBase = process.env.NEXT_PUBLIC_API_URL ?? "";
+// ✅ FIX 1: Clean base URL (remove trailing slash if exists)
+const rawBase = (process.env.NEXT_PUBLIC_API_URL ?? "").replace(/\/$/, "");
 
-// If the env var already ends with /api/v1 (old docker-compose value), strip it
-// so downstream code appending /api/v1 doesn't double up.
-const API_BASE = rawBase.endsWith("/api/v1")
-  ? rawBase  // already correct external URL
-  : rawBase === "" || rawBase === "/api/v1"
-    ? "/api/v1"  // local proxy — use relative so nginx handles it
-    : rawBase + "/api/v1";  // external base URL without suffix
-
+// ✅ FIX 2: Always use full backend path explicitly
 export const api = axios.create({
-  baseURL: API_BASE,
+  baseURL: rawBase, // e.g. https://...railway.app OR http://127.0.0.1:8000
   headers: { "Content-Type": "application/json" },
   withCredentials: false,
 });
 
-// Request interceptor — attach access token
+// ─────────────────────────────────────────
+// Request interceptor — attach token
+// ─────────────────────────────────────────
+
 api.interceptors.request.use((config) => {
   const token =
-  typeof window !== "undefined"
-    ? localStorage.getItem("access_token")
-    : null;
+    typeof window !== "undefined"
+      ? localStorage.getItem("access_token")
+      : null;
 
   if (token) {
     config.headers = config.headers ?? {};
@@ -40,46 +28,68 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
-// Response interceptor — handle 401 by refreshing token
+// ─────────────────────────────────────────
+// Response interceptor — refresh token
+// ─────────────────────────────────────────
 
 api.interceptors.response.use(
   (res) => res,
   async (error) => {
     const originalRequest = error.config;
+
     if (error.response?.status === 401 && !originalRequest._retry) {
       originalRequest._retry = true;
+
       try {
         const refreshToken = localStorage.getItem("refresh_token");
         if (!refreshToken) throw new Error("No refresh token");
-        const { data } = await axios.post(`${API_BASE}/auth/refresh`, {
-          refresh_token: refreshToken,
-        });
+
+        const { data } = await axios.post(
+          `${rawBase}/api/v1/auth/refresh`,
+          { refresh_token: refreshToken }
+        );
+
         localStorage.setItem("access_token", data.access_token);
         localStorage.setItem("refresh_token", data.refresh_token);
+
         originalRequest.headers = originalRequest.headers ?? {};
         originalRequest.headers.Authorization = `Bearer ${data.access_token}`;
+
         return api(originalRequest);
       } catch (_) {
         localStorage.clear();
         window.location.href = "/auth/login";
       }
     }
+
     return Promise.reject(error);
   }
 );
 
-// Auth
-export const authApi = {
-  // FIX: Added terms_accepted field to register payload type
-  register: (data: { email: string; username: string; password: string; terms_accepted: boolean }) =>
-    api.post("/auth/register", data),
-  login: (data: { email: string; password: string }) =>
-    api.post("/auth/login", data),
-  refresh: (refresh_token: string) =>
-    api.post("/auth/refresh", { refresh_token }),
-  me: () => api.get("/auth/me"),
-};
+// ─────────────────────────────────────────
+// Auth (✅ FIXED PATHS)
+// ─────────────────────────────────────────
 
+export const authApi = {
+  register: (data: {
+    email: string;
+    username: string;
+    password: string;
+    terms_accepted: boolean;
+  }) =>
+    api.post("/api/v1/auth/register", data),
+
+  login: (data: { email: string; password: string }) =>
+    api.post("/api/v1/auth/login", {
+      email: data.email,
+      password: data.password,
+    }),
+
+  refresh: (refresh_token: string) =>
+    api.post("/api/v1/auth/refresh", { refresh_token }),
+
+  me: () => api.get("/api/v1/auth/me"),
+};
 // Scans
 export const scanApi = {
   url: (url: string) => api.post("/scan/url", { url }),
