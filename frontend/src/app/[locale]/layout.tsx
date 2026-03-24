@@ -6,6 +6,9 @@ import { NextIntlClientProvider } from "next-intl";
 import { getMessages, getLocale } from "next-intl/server";
 import { notFound } from "next/navigation";
 import { locales } from "@/i18n/request";
+import { ThemeProvider } from "next-themes";
+import ThemeWrapper from "@/components/ThemeWrapper";
+
 
 export const metadata: Metadata = {
   title: "PhishGuard — Cybersecurity Detection Platform",
@@ -62,38 +65,38 @@ export default async function LocaleLayout({
         )}
       </head>
       <body
-        style={{
-          background: "#050810",
-          color: "#e8eaf0",
-          fontFamily:
-            locale === "hi"
-              ? "'Noto Sans Devanagari', 'Inter', sans-serif"
-              : undefined,
-        }}
+
+        className={
+          locale === "hi"
+            ? "font-devanagari"
+            : ""
+        }
       >
-        <NextIntlClientProvider locale={locale} messages={messages}>
-          <Providers>
-            {children}
-            <Toaster
-              position="top-right"
-              toastOptions={{
-                style: {
-                  background: "#0c1120",
-                  color: "#e8eaf0",
-                  border: "1px solid #1a2540",
-                  fontFamily: "'JetBrains Mono', monospace",
-                  fontSize: "13px",
-                },
-                success: {
-                  iconTheme: { primary: "#00ff88", secondary: "#0c1120" },
-                },
-                error: {
-                  iconTheme: { primary: "#ff2d55", secondary: "#0c1120" },
-                },
-              }}
-            />
-          </Providers>
-        </NextIntlClientProvider>
+        <ThemeWrapper>
+          <NextIntlClientProvider locale={locale} messages={messages}>
+            <Providers>
+              {children}
+              <Toaster
+                position="top-right"
+                toastOptions={{
+                  style: {
+                    background: "#0c1120",
+                    color: "#e8eaf0",
+                    border: "1px solid #1a2540",
+                    fontFamily: "'JetBrains Mono', monospace",
+                    fontSize: "13px",
+                  },
+                  success: {
+                    iconTheme: { primary: "#00ff88", secondary: "#0c1120" },
+                  },
+                  error: {
+                    iconTheme: { primary: "#ff2d55", secondary: "#0c1120" },
+                  },
+                }}
+              />
+            </Providers>
+          </NextIntlClientProvider>
+        </ThemeWrapper>
       </body>
     </html>
   );

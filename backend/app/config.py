@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     SECRET_KEY: str = secrets.token_urlsafe(32)
 
     # Database
-    DATABASE_URL: str = "postgresql://phishguard:phishguard_pass@postgres:5432/phishguard"
+    DATABASE_URL: str = "sqlite:///./test.db"
 
     # Redis
     REDIS_URL: str = "redis://redis:6379/0"
