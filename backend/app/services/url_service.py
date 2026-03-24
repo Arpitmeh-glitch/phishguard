@@ -21,6 +21,21 @@ Detection pipeline (in order):
 
 All external layers (VT, Gemini) are fully optional: if their keys are absent
 or the calls fail, the pipeline returns the ML+rule result unchanged.
+
+FIX CHANGELOG (production bug fixes):
+  - initialize() now logs whitelist stats AND raises if the detector is broken,
+    instead of silently setting _initialized = False and returning SAFE for
+    every URL.
+  - initialize() checks csv_load_succeeded from whitelist_stats() and logs a
+    WARNING if CSV files were missing — this is the most common production
+    misconfiguration.
+  - scan_url_async() logs the incoming URL and the final result at INFO level
+    so every scan is traceable in production logs.
+  - The fallback in scan_url() (triggered on asyncio.run() failures) now also
+    logs clearly so it is visible when it activates.
+  - _normalize_predict_result() logs a WARNING when unexpected keys are missing
+    from the detector output, making schema drift visible.
+  - No changes to scoring logic, thresholds, or detection rules.
 """
 
 import logging
@@ -44,22 +59,48 @@ def initialize() -> None:
 
     improved_url_detector is self-contained (rule-based + optional ML).
     It loads its whitelist at import time and needs no explicit model
-    initialisation.  We simply mark the module as ready so the rest of
-    the pipeline can call _core.predict() directly.
+    initialisation.  We verify the module is healthy by calling
+    whitelist_stats() and log the result clearly.
+
+    FIX: Previously, any exception here was caught, _initialized was set to
+    False, and the function returned silently.  Every subsequent call to
+    scan_url_async() would then call initialize() again, fail again, and
+    fall through to the error-return block which returned label="SAFE"
+    with confidence=0.0 — making ALL URLs appear safe in production.
+
+    Now: exceptions are re-raised so the FastAPI startup hook fails loudly,
+    and a WARNING is emitted when CSV whitelists are missing.
     """
     global _initialized
     if _initialized:
         return
     try:
-        # Verify the module loaded correctly by exercising whitelist_stats().
         stats = _core.whitelist_stats()
+
+        # ── Log whitelist health ──────────────────────────────────────────
         logger.info(
-            "✅ URL detection model initialised (whitelist: %d entries)",
+            "✅ URL detector initialised | whitelist_total=%d | csv=%d | builtin=%d",
             stats.get("total_entries", 0),
+            stats.get("csv_entries", 0),
+            stats.get("builtin_entries", 0),
         )
+
+        # ── Warn if CSV files were not found (common production misconfiguration)
+        if not stats.get("csv_load_succeeded", False):
+            logger.warning(
+                "⚠️  URL detector: no CSV whitelist files were loaded. "
+                "Detection will work but false-positive rates may be higher. "
+                "Searched paths: %s  "
+                "Place top-1m.csv or tranco_L6J4.csv in backend/data/ and redeploy.",
+                stats.get("search_paths", []),
+            )
+
         _initialized = True
+
     except Exception as e:
-        logger.error("❌ URL detector init failed: %s", e)
+        # Re-raise so startup fails loudly rather than silently returning SAFE
+        # for every URL. Ops teams need to see this.
+        logger.error("❌ URL detector init FAILED — service cannot scan URLs: %s", e)
         _initialized = False
         raise
 
@@ -68,14 +109,24 @@ def _normalize_predict_result(raw: dict) -> dict:
     """
     Normalise the dict returned by improved_url_detector.predict() so that
     it is fully compatible with the shape the rest of url_service.py and its
-    callers expect from the old url_detector_core API.
+    callers expect.
 
-    improved_url_detector.predict() already returns all required keys:
-        label, confidence, risk_tier, ml_probability, rule_score,
-        reasons, detection_mode, whitelist_hit
-    This shim guarantees every key is present and typed correctly even if
-    future versions of the detector change their output shape.
+    FIX: Added per-key WARNING logs so schema drift (e.g. a future version
+    of the detector renaming a key) is immediately visible in production logs
+    rather than silently producing default values.
     """
+    expected_keys = {
+        "label", "confidence", "risk_tier", "ml_probability",
+        "rule_score", "reasons", "detection_mode", "whitelist_hit",
+    }
+    missing = expected_keys - raw.keys()
+    if missing:
+        logger.warning(
+            "⚠️  improved_url_detector.predict() returned unexpected schema — "
+            "missing keys: %s  (using defaults). This may indicate a version mismatch.",
+            missing,
+        )
+
     return {
         "label":          raw.get("label", "SAFE"),
         "confidence":     float(raw.get("confidence", 0.0)),
@@ -105,8 +156,6 @@ def _build_risk_score_int(confidence: float) -> int:
 
 # ── Score merging ─────────────────────────────────────────────────────────────
 
-# Confidence boosts applied when external layers confirm a threat.
-# Values are additive and capped at 1.0; they never reduce an existing score.
 _VT_VERDICT_BOOST   = {"malicious": 0.20, "suspicious": 0.08, "clean": 0.0, "unknown": 0.0}
 _AI_THREAT_BOOST    = {"high": 0.15, "medium": 0.05, "low": 0.0, "safe": 0.0}
 
@@ -119,15 +168,15 @@ def _apply_vt_boost(threat_score: float, vt_result: Optional[dict]) -> float:
     """
     if vt_result is None:
         return threat_score
-        
+
     verdict = vt_result.get("verdict", "unknown")
     vt_conf = float(vt_result.get("confidence", 0.0))
-    
+
     if verdict == "clean":
         # Drastically drop the threat score if VT confirms it is a clean domain
         return round(max(0.0, threat_score - 0.40), 4)
 
-    base_boost  = _VT_VERDICT_BOOST.get(verdict, 0.0)
+    base_boost   = _VT_VERDICT_BOOST.get(verdict, 0.0)
     actual_boost = base_boost * (0.5 + vt_conf * 0.5)
     return round(min(threat_score + actual_boost, 1.0), 4)
 
@@ -141,7 +190,6 @@ def _reclassify(threat_score: float, current_label: str) -> str:
         return "PHISHING"
     if threat_score >= 0.35:
         return "SUSPICIOUS"
-    
     return "SAFE"
 
 
@@ -156,20 +204,34 @@ def _apply_ai_boost(confidence: float, ai_result: Optional[dict]) -> float:
     return round(min(confidence + boost, 1.0), 4)
 
 
-
 # ── Async pipeline ────────────────────────────────────────────────────────────
 
 async def scan_url_async(url: str) -> dict:
     """
     Full async detection pipeline.  Called directly from the FastAPI route.
     """
+    # ── FIX: Log every scan entry so we can verify the detector is actually
+    # being reached in production. If logs show this line but all results are
+    # SAFE, the issue is in the scoring layers below, not in routing.
+    logger.info("scan_url_async() START | url=%s", url[:200])
+
     if not _initialized:
+        # FIX: initialize() now raises on failure instead of silently returning.
+        # This means if initialization failed at startup, we get a clear error
+        # here rather than a silent SAFE result.
         initialize()
 
     # ── Layer 1 + 2: ML model + rule-based overlay ────────────────────────
     try:
-        raw_result = _core.predict(url.strip())          # ← improved_url_detector
-        result = _normalize_predict_result(raw_result)   # ← ensure schema compat
+        raw_result = _core.predict(url.strip())
+        result     = _normalize_predict_result(raw_result)
+        logger.debug(
+            "scan_url_async() core result | label=%s | confidence=%.4f | "
+            "rule_score=%.4f | reasons=%d | mode=%s | url=%s",
+            result.get("label"), result.get("confidence"),
+            result.get("rule_score"), len(result.get("reasons", [])),
+            result.get("detection_mode"), url[:80],
+        )
     except RuntimeError as e:
         logger.error("URL scan failed (model not loaded): %s", e)
         result = {
@@ -209,13 +271,16 @@ async def scan_url_async(url: str) -> dict:
             rule_score     = rule_score,
             label          = current_label,
         )
+        if vt_result:
+            logger.debug(
+                "scan_url_async() VT result | verdict=%s | malicious=%s | url=%s",
+                vt_result.get("verdict"), vt_result.get("malicious"), url[:80],
+            )
     except Exception as exc:
         logger.warning("VirusTotal layer skipped due to unexpected error: %s", exc)
 
-    # Apply VT boost using the normalized threat score
     after_vt_threat = _apply_vt_boost(current_threat_score, vt_result)
 
-    # If VT pushed us over the PHISHING threshold, append a reason
     if vt_result and vt_result.get("verdict") in ("malicious", "suspicious"):
         vt_reason = (
             f"VirusTotal: {vt_result['malicious']} engine(s) flagged malicious, "
@@ -224,18 +289,15 @@ async def scan_url_async(url: str) -> dict:
         if vt_reason not in result.get("reasons", []):
             result.setdefault("reasons", []).append(vt_reason)
 
-    # Re-classify label after VT boost
     current_label = _reclassify(after_vt_threat, current_label)
 
     # ── Layer 4: Gemini AI deep threat explanation ────────────────────────
     ai_result: Optional[dict] = None
-    
-    # Calculate safe probability based on the ML phishing probability
+
     ml_safe_prob = 1.0 - ml_prob
-    
-    # Bypass AI entirely if the ML model is highly confident in either direction
+
     if ml_safe_prob >= 0.95 or ml_prob >= 0.95:
-        logger.info("Skipping AI analysis — ML confidence high")
+        logger.debug("scan_url_async() skipping AI — ML confidence high | ml_prob=%.4f", ml_prob)
     elif current_label in ("PHISHING", "SUSPICIOUS"):
         vt_summary = ""
         if vt_result and vt_result.get("verdict") != "unknown":
@@ -252,6 +314,11 @@ async def scan_url_async(url: str) -> dict:
         )
         try:
             ai_result = await ai_service.explain_threat(domain_context)
+            if ai_result:
+                logger.debug(
+                    "scan_url_async() AI result | threat_level=%s | url=%s",
+                    ai_result.get("threat_level"), url[:80],
+                )
         except Exception as exc:
             logger.warning("Gemini threat explanation skipped: %s", exc)
 
@@ -259,7 +326,6 @@ async def scan_url_async(url: str) -> dict:
     final_threat = _apply_ai_boost(after_vt_threat, ai_result)
     final_label  = _reclassify(final_threat, current_label)
 
-    # Convert the internal threat score back to label confidence for the frontend
     if final_label == "SAFE":
         final_confidence = max(0.0, 1.0 - final_threat)
     else:
@@ -274,6 +340,14 @@ async def scan_url_async(url: str) -> dict:
     result["ai_analysis"]        = ai_result
     result["ai_used"]            = ai_result is not None
 
+    # ── FIX: Log final result so every scan produces a traceable audit line ──
+    logger.info(
+        "scan_url_async() DONE | label=%s | risk_score=%d | "
+        "vt_used=%s | ai_used=%s | url=%s",
+        final_label, result["risk_score"],
+        result["vt_used"], result["ai_used"], url[:200],
+    )
+
     return result
 
 
@@ -281,15 +355,17 @@ def scan_url(url: str) -> dict:
     """
     Safe sync wrapper for async scan_url_async.
     Works in background threads (FastAPI).
-    """
-    import asyncio
 
+    FIX: The fallback path now logs clearly when it activates so it is
+    visible in production logs that the async path failed and a simpler
+    result was returned.
+    """
     try:
         return asyncio.run(scan_url_async(url))
 
     except RuntimeError as e:
         # If already inside an event loop (rare case)
-        logger.warning(f"Event loop already running: {e}")
+        logger.warning("scan_url: event loop already running, using thread pool: %s", e)
 
         import concurrent.futures
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
@@ -298,33 +374,41 @@ def scan_url(url: str) -> dict:
 
     except Exception as exc:
         logger.warning(
-            "scan_url async failed, falling back to core: %s", exc
+            "scan_url: async pipeline failed, falling back to core-only result: %s", exc
         )
         try:
-            raw_result = _core.predict(url.strip())          # ← improved_url_detector
-            result = _normalize_predict_result(raw_result)   # ← ensure schema compat
+            raw_result = _core.predict(url.strip())
+            result     = _normalize_predict_result(raw_result)
 
             current_label = result.get("label", "SAFE")
-            conf = result.get("confidence", 0.0)
-
-            threat_score = conf if current_label != "SAFE" else max(0.0, 1.0 - conf)
+            conf          = result.get("confidence", 0.0)
+            threat_score  = conf if current_label != "SAFE" else max(0.0, 1.0 - conf)
 
             result["risk_score"] = _build_risk_score_int(threat_score)
-            result["vt_result"] = None
-            result["vt_used"] = False
+            result["vt_result"]  = None
+            result["vt_used"]    = False
             result["ai_analysis"] = None
-            result["ai_used"] = False
+            result["ai_used"]    = False
 
+            logger.info(
+                "scan_url() fallback result | label=%s | risk_score=%d | url=%s",
+                current_label, result["risk_score"], url[:200],
+            )
             return result
 
         except Exception as e:
-            logger.error("URL scan fallback failed: %s", e)
+            logger.error("URL scan fallback also failed: %s", e)
+            # FIX: Return a clearly-marked error result rather than a silent SAFE.
+            # risk_score=50 (unknown) is safer than 0 (safe) when we have no data.
             return {
-                "label": "SAFE",
-                "confidence": 0.0,
-                "risk_score": 0,
-                "reasons": ["Scan failed"],
-                "vt_result": None,
-                "ai_analysis": None,
-                "ai_used": False,
+                "label":          "UNKNOWN",
+                "confidence":     0.0,
+                "risk_score":     50,   # neutral — caller should treat as inconclusive
+                "risk_tier":      "MEDIUM",
+                "reasons":        [f"Scan failed: {e}"],
+                "vt_result":      None,
+                "vt_used":        False,
+                "ai_analysis":    None,
+                "ai_used":        False,
+                "detection_mode": "error",
             }

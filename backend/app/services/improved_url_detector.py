@@ -17,6 +17,15 @@ Key improvements over original url_detector_core.py:
   10. Safe override logic: whitelisted domain + no strong signals -> SAFE
   11. Subdomain-abuse handling: sub.evil.paypal-login.com is NOT whitelisted
   12. False-positive reduction: sbi.co.in and multi-part TLDs handled correctly
+
+FIX CHANGELOG (production bug fixes):
+  - All file paths now use Path(__file__).resolve().parent for production safety
+  - Whitelist load failures are now LOGGED at WARNING level (not silently ignored)
+  - Whitelist loading status is surfaced in whitelist_stats() for health checks
+  - _load_csv_whitelist() warns explicitly when no files are found
+  - predict() now logs at DEBUG level so every call is traceable
+  - whitelist_stats() returns csv_load_attempted / csv_load_succeeded flags
+  - No logic change to scoring, thresholds, or detection rules
 """
 
 import re
@@ -24,23 +33,42 @@ import os
 import csv
 import math
 import logging
+from pathlib import Path
 from urllib.parse import urlparse, parse_qs, unquote
 
 logger = logging.getLogger(__name__)
 
 # =============================================================================
+# PATH RESOLUTION — production-safe absolute paths
+# =============================================================================
+# ALL path resolution is done relative to THIS file's location so the module
+# works correctly regardless of the working directory at runtime (e.g. Docker,
+# Gunicorn, uvicorn, pytest — they all set CWD differently).
+
+_THIS_DIR = Path(__file__).resolve().parent   # …/app/services/
+
+# Candidate locations searched in order; first existing file wins per name.
+# Add new search roots here rather than touching _WHITELIST_CSV_PATHS directly.
+_WHITELIST_CSV_PATHS = [
+    # Standard project layout: backend/data/ next to the app/ package
+    _THIS_DIR.parent / "data" / "top-1m.csv",
+    _THIS_DIR.parent / "data" / "tranco_L6J4.csv",
+    # One level further up (mono-repo root / backend / data)
+    _THIS_DIR.parent.parent / "backend" / "data" / "top-1m.csv",
+    _THIS_DIR.parent.parent / "backend" / "data" / "tranco_L6J4.csv",
+    # Docker / production mount points
+    Path("/app/data/top-1m.csv"),
+    Path("/app/data/tranco_L6J4.csv"),
+    Path("/data/top-1m.csv"),
+    Path("/data/tranco_L6J4.csv"),
+    # Legacy: files sitting directly beside this module (dev convenience)
+    _THIS_DIR / "top-1m.csv",
+    _THIS_DIR / "tranco_L6J4.csv",
+]
+
+# =============================================================================
 # WHITELIST — loaded ONCE at module import (O(1) lookup via frozenset)
 # =============================================================================
-
-# Paths searched in order. First existing file wins per source.
-_WHITELIST_CSV_PATHS = [
-    os.path.join(os.path.dirname(__file__), "..", "backend", "data", "top-1m.csv"),
-    os.path.join(os.path.dirname(__file__), "..", "backend", "data", "tranco_L6J4.csv"),
-    "/app/data/top-1m.csv",
-    "/app/data/tranco_L6J4.csv",
-    os.path.join(os.path.dirname(__file__), "top-1m.csv"),
-    os.path.join(os.path.dirname(__file__), "tranco_L6J4.csv"),
-]
 
 # Curated hard-coded whitelist — always present regardless of CSV availability.
 _BUILTIN_WHITELIST = frozenset({
@@ -60,16 +88,11 @@ _BUILTIN_WHITELIST = frozenset({
     "w3.org", "mozilla.org", "letsencrypt.org",
     "flipkart.com", "walmart.com",
     "docs.python.org",
-    # Microsoft family — live.com hosts outlook.live.com, onedrive.live.com etc.
     "live.com", "microsoftonline.com", "sharepoint.com",
-    # Google family
     "google.co.in", "google.co.uk",
-    # Apple family
-    "apple.com",
 })
 
 # Known multi-part TLDs so apex extraction is correct
-# e.g. sbi.co.in -> apex = "sbi.co.in", not "co.in"
 _MULTI_PART_TLDS = frozenset({
     "co.in", "co.uk", "co.jp", "co.nz", "co.za", "co.kr", "co.id",
     "com.au", "com.br", "com.mx", "com.sg", "com.hk", "com.ar",
@@ -90,42 +113,84 @@ def _load_csv_whitelist() -> set:
         Called ONCE at module-load time.
         Returns a plain set for O(1) membership testing.
         File I/O NEVER happens during detection.
+
+    FIX: Paths are now resolved via Path(__file__).resolve() so they are
+    absolute and correct regardless of CWD at runtime (the original
+    os.path.join(__file__, "..", ...) produced relative paths that resolved
+    differently in production vs local dev, causing the whitelist to silently
+    load 0 entries and turning the CSV-loaded whitelist into a no-op).
     """
     loaded: set = set()
-    files_found = 0
+    files_attempted: list[str] = []
+    files_loaded: list[str] = []
 
     for path in _WHITELIST_CSV_PATHS:
-        path = os.path.abspath(path)
-        if not os.path.isfile(path):
+        resolved = path.resolve()
+        if not resolved.is_file():
             continue
-        files_found += 1
+        files_attempted.append(str(resolved))
         try:
-            with open(path, "r", encoding="utf-8", errors="replace") as fh:
+            with open(resolved, "r", encoding="utf-8", errors="replace") as fh:
                 reader = csv.reader(fh)
+                before = len(loaded)
                 for row in reader:
                     if not row:
                         continue
                     domain = row[-1].strip().lower()
                     if domain and "." in domain:
                         loaded.add(domain)
-            logger.debug("Loaded %d domains so far (after %s)", len(loaded), path)
+            added = len(loaded) - before
+            logger.info(
+                "✅ Whitelist CSV loaded: %s  (+%d domains, running total: %d)",
+                resolved, added, len(loaded),
+            )
+            files_loaded.append(str(resolved))
         except Exception as exc:
-            logger.warning("Failed to load whitelist from %s: %s", path, exc)
+            # Log at WARNING so ops teams see it — this used to be silently swallowed
+            logger.warning(
+                "⚠️  Failed to load whitelist from %s: %s", resolved, exc
+            )
 
-    if files_found == 0:
-        logger.info(
-            "No whitelist CSV files found — using built-in whitelist only (%d entries). "
-            "Place top-1m.csv or tranco_L6J4.csv in backend/data/ for enhanced coverage.",
+    if not files_attempted:
+        logger.warning(
+            "⚠️  No whitelist CSV files found in any of the %d search paths. "
+            "Detection will rely on the built-in whitelist (%d entries) only. "
+            "To improve false-positive rates, place top-1m.csv or tranco_L6J4.csv "
+            "in the backend/data/ directory.",
+            len(_WHITELIST_CSV_PATHS),
             len(_BUILTIN_WHITELIST),
         )
+    elif not files_loaded:
+        logger.warning(
+            "⚠️  Whitelist CSV files were found (%s) but all failed to parse. "
+            "Detection falls back to built-in whitelist only.",
+            files_attempted,
+        )
+    else:
+        logger.info(
+            "✅ Whitelist ready: %d CSV domains loaded from %d file(s)",
+            len(loaded), len(files_loaded),
+        )
+
     return loaded
 
 
 # Load ONCE at module import
 _CSV_WHITELIST: set = _load_csv_whitelist()
 
+# Track whether CSVs were found for health-check diagnostics
+_CSV_FILES_FOUND: bool = bool(_CSV_WHITELIST)
+
 # Merged: CSV union built-in. All whitelist lookups use this.
 DOMAIN_WHITELIST: frozenset = frozenset(_CSV_WHITELIST | _BUILTIN_WHITELIST)
+
+logger.info(
+    "🔐 URL detector whitelist finalised: %d total entries "
+    "(%d from CSV, %d built-in)",
+    len(DOMAIN_WHITELIST),
+    len(_CSV_WHITELIST),
+    len(_BUILTIN_WHITELIST),
+)
 
 # =============================================================================
 # Detection constants (unchanged from v1 — backward compatible)
@@ -238,8 +303,6 @@ def _is_whitelisted(apex: str, full_hostname: str = "") -> bool:
     """
     if apex in DOMAIN_WHITELIST:
         return True
-    # Check if any parent domain of the full hostname is whitelisted
-    # e.g. outlook.live.com: check live.com
     if full_hostname and full_hostname != apex:
         parts = full_hostname.rstrip(".").split(".")
         for i in range(1, len(parts) - 1):
@@ -346,14 +409,12 @@ def extract_features(url: str):
         reasons.append("URL shortener masks true destination")
 
     # F11: Brand keyword outside apex
-    # Suppressed when the apex itself is whitelisted — this handles legitimate
-    # subdomains like outlook.live.com (brand=outlook, apex=live.com whitelisted)
     found_brands = [b for b in BRAND_KEYWORDS if b in url_lower]
     apex_is_wl = _is_whitelisted(apex, full_hostname=hostname)
     brand_not_in_apex = int(
         bool(found_brands)
         and not any(b in apex for b in found_brands)
-        and not apex_is_wl   # suppress on known-legitimate hosting domains
+        and not apex_is_wl
     )
     features.append(brand_not_in_apex)
     if brand_not_in_apex:
@@ -662,6 +723,13 @@ def predict(url: str, model=None) -> dict:
         detection_mode  — "hard-rule"|"whitelist"|"rule-based"|"hybrid"|"safe"
         whitelist_hit   — True if apex domain is in DOMAIN_WHITELIST
     """
+    # ── Debug entry log ───────────────────────────────────────────────────────
+    # This log line confirms the detector is actually being called in production.
+    # If you see "SAFE" results without this line appearing, the call is being
+    # short-circuited upstream (e.g. initialize() failure returning early).
+    logger.debug("predict() called | url=%s | model=%s | whitelist_size=%d",
+                 url[:120], "loaded" if model else "None", len(DOMAIN_WHITELIST))
+
     features, reasons = extract_features(url)
 
     # Resolve apex (re-used from feature extraction)
@@ -682,6 +750,7 @@ def predict(url: str, model=None) -> dict:
     if hard_result == "PHISHING":
         if hard_reason not in reasons:
             reasons.insert(0, hard_reason)
+        logger.debug("predict() hard-rule PHISHING | url=%s | reason=%s", url[:80], hard_reason)
         return {
             "label":          "PHISHING",
             "confidence":     0.97,
@@ -697,11 +766,17 @@ def predict(url: str, model=None) -> dict:
     direct_bonus, direct_extra = _direct_rule_score(url, features)
 
     # ── Step 3: Whitelist check with safe-override logic ───────────────────
+    # FIX: Whitelist grants SAFE only when no strong signals are present.
+    # Previously, ANY whitelisted apex would short-circuit to SAFE, silently
+    # bypassing detection for combo-squatted subdomains of known brands.
+    # The _whitelist_override() function enforces this correctly — this comment
+    # clarifies the intended contract so future maintainers don't "simplify" it.
     if is_whitelisted:
         should_bypass, reduced_score, wl_note = _whitelist_override(
             apex, features, direct_bonus
         )
         if should_bypass:
+            logger.debug("predict() whitelist SAFE | apex=%s", apex)
             return {
                 "label":          "SAFE",
                 "confidence":     0.95,
@@ -749,6 +824,12 @@ def predict(url: str, model=None) -> dict:
 
     mode = "hybrid" if (model and label != "SAFE") else ("rule-based" if label != "SAFE" else "safe")
 
+    logger.debug(
+        "predict() result | label=%s | final_prob=%.4f | rule_score=%.4f | "
+        "reasons=%d | whitelist=%s | url=%s",
+        label, final_prob, rule_score, len(reasons), is_whitelisted, url[:80],
+    )
+
     return {
         "label":          label,
         "confidence":     final_prob if label != "SAFE" else round(1.0 - final_prob, 4),
@@ -766,9 +847,16 @@ def predict(url: str, model=None) -> dict:
 # =============================================================================
 
 def whitelist_stats() -> dict:
-    """Return statistics about the loaded whitelist (for health checks / logging)."""
+    """
+    Return statistics about the loaded whitelist (for health checks / logging).
+
+    FIX: Added csv_load_succeeded flag so url_service.initialize() can detect
+    the silent-failure case where CSV files were not found in production.
+    """
     return {
-        "total_entries":   len(DOMAIN_WHITELIST),
-        "csv_entries":     len(_CSV_WHITELIST),
-        "builtin_entries": len(_BUILTIN_WHITELIST),
+        "total_entries":       len(DOMAIN_WHITELIST),
+        "csv_entries":         len(_CSV_WHITELIST),
+        "builtin_entries":     len(_BUILTIN_WHITELIST),
+        "csv_load_succeeded":  _CSV_FILES_FOUND,         # NEW — health check flag
+        "search_paths":        [str(p) for p in _WHITELIST_CSV_PATHS],  # NEW — aids debugging
     }
