@@ -33,7 +33,7 @@ build/
 backend/app/services/data/*.csv
 backend/app/services/data/*.txt
 app/services/data/tranco*.csv
-backend/app/data/extracted
-backend/app/data/raw
-backend/app/uploads
-backend/app/venv
+backend/data/extracted/
+backend/data/raw/
+backend/data/tranco*.csv
+backend/uploads/
