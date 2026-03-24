@@ -2,31 +2,14 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Shield, Eye, EyeOff, AlertCircle } from "lucide-react";
+import { Shield, Eye, EyeOff, AlertCircle, Lock, ArrowRight, Zap } from "lucide-react";
 import toast from "react-hot-toast";
 import { useAuthStore } from "@/lib/store";
+import { motion, AnimatePresence } from "framer-motion";
 
-/*
- * SECURITY: Admin login option has been REMOVED from this page.
- *
- * Previous version exposed admin credentials and an admin demo button
- * in the sign-in UI — a serious information-disclosure risk.
- *
- * Admin access is now exclusively handled via:
- *   1. Backend authentication: the /auth/login endpoint enforces the
- *      ADMIN_EMAIL gate (only the configured admin email may receive an
- *      admin-role JWT token).
- *   2. Protected admin routes: /dashboard/admin/* requires admin role
- *      verified server-side on every request.
- *
- * There is intentionally NO admin UI button, demo credential, or
- * role-selector anywhere on this page.
- */
-
-// Only non-privileged demo accounts are shown — no admin account.
 const DEMO_ACCOUNTS = [
-  { label: "Analyst", email: "analyst@phishguard.io", password: "Analyst1!", color: "#bf5af2" },
-  { label: "User",    email: "user@phishguard.io",    password: "User1234!", color: "#00f5ff" },
+  { label: "Analyst", email: "analyst@phishguard.io", password: "Analyst1!", color: "#c471ed" },
+  { label: "User",    email: "user@phishguard.io",    password: "User1234!", color: "#00e5ff"  },
 ];
 
 export default function LoginPage() {
@@ -36,23 +19,23 @@ export default function LoginPage() {
   const [password, setPassword]         = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError]               = useState("");
+  const [focusedField, setFocusedField] = useState<string | null>(null);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
-    if (!email || !password) {
-      setError("Please enter your email and password");
-      return;
-    }
+    if (!email || !password) { setError("Please enter your email and password"); return; }
     try {
       await login(email, password);
-      toast.success("Access granted");
+      toast.success("Access granted", {
+        style: { background: "#080e1c", color: "#e2e8f8", border: "1px solid rgba(0,230,118,0.3)" },
+        icon: "🛡️",
+      });
       router.push("/dashboard");
     } catch (err: any) {
       const detail = err?.response?.data?.detail;
       const msg = typeof detail === "string" ? detail : "Authentication failed";
       setError(msg);
-      toast.error(msg);
     }
   };
 
@@ -64,109 +47,142 @@ export default function LoginPage() {
       router.push("/dashboard");
     } catch (err: any) {
       const detail = err?.response?.data?.detail;
-      const msg = typeof detail === "string" ? detail : "Demo login failed — ensure the server is running";
+      const msg = typeof detail === "string" ? detail : "Demo login failed — ensure server is running";
       setError(msg);
-      toast.error(msg);
     }
   };
 
   return (
-    <div className="min-h-screen grid-bg flex items-center justify-center px-4 py-8">
-      {/* Background orb */}
-      <div className="fixed inset-0" style={{ zIndex: 0, pointerEvents: "none" }} aria-hidden="true">
-        <div
-          className="absolute rounded-full"
-          style={{
-            top: "25%", left: "25%",
-            width: "16rem", height: "16rem",
-            background: "radial-gradient(circle, #00f5ff, transparent)",
-            filter: "blur(80px)", opacity: 0.08,
-          }}
-        />
+    <div
+      className="min-h-screen grid-bg flex items-center justify-center px-4 py-12"
+      style={{ background: "var(--bg-void)" }}
+    >
+      {/* Ambient bg */}
+      <div className="fixed inset-0" style={{ zIndex: 0, pointerEvents: "none" }} aria-hidden>
+        <div style={{
+          position: "absolute", top: "20%", left: "30%",
+          width: 400, height: 400,
+          background: "radial-gradient(ellipse, rgba(0,229,255,0.07) 0%, transparent 60%)",
+          filter: "blur(50px)",
+        }} />
+        <div style={{
+          position: "absolute", bottom: "20%", right: "25%",
+          width: 300, height: 300,
+          background: "radial-gradient(ellipse, rgba(196,113,237,0.06) 0%, transparent 60%)",
+          filter: "blur(60px)",
+        }} />
       </div>
 
-      <div className="w-full max-w-md" style={{ position: "relative", zIndex: 10 }}>
-        {/* Logo */}
-        <div className="text-center mb-8">
-          <div
-            className="w-14 h-14 rounded-2xl flex items-center justify-center mx-auto mb-4 border"
-            style={{ background: "rgba(0,245,255,0.1)", borderColor: "rgba(0,245,255,0.3)" }}
-          >
-            <Shield className="w-7 h-7" style={{ color: "var(--neon-cyan)" }} />
-          </div>
-          <h1 className="font-display text-2xl font-bold" style={{ color: "#e8eaf0" }}>
-            Phish<span style={{ color: "var(--neon-cyan)" }}>Guard</span>
-          </h1>
-          <p className="font-mono text-sm mt-1" style={{ color: "#8892b0" }}>Secure access portal</p>
-        </div>
+      <div className="w-full max-w-[400px] relative" style={{ zIndex: 10 }}>
 
-        {/* Demo accounts — analyst and user only, NO admin */}
-        <div className="cyber-card p-4 mb-4">
-          <div className="text-xs font-mono uppercase tracking-wider mb-3 flex items-center gap-1.5" style={{ color: "#8892b0" }}>
-            <span className="w-1.5 h-1.5 rounded-full animate-pulse inline-block" style={{ background: "var(--neon-green)" }} />
-            Demo Accounts — Click to sign in instantly
+        {/* Logo mark */}
+        <motion.div
+          initial={{ opacity: 0, y: -20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="text-center mb-8"
+        >
+          <Link href="/" style={{ textDecoration: "none" }}>
+            <div
+              className="w-14 h-14 rounded-2xl flex items-center justify-center mx-auto mb-4 relative"
+              style={{ background: "rgba(0,229,255,0.08)", border: "1px solid rgba(0,229,255,0.2)" }}
+            >
+              <Shield size={28} style={{ color: "#00e5ff", filter: "drop-shadow(0 0 12px rgba(0,229,255,0.6))" }} />
+              <div
+                className="absolute -top-1 -right-1 w-3 h-3 rounded-full"
+                style={{ background: "#00e676", boxShadow: "0 0 8px #00e676" }}
+              />
+            </div>
+          </Link>
+          <div className="font-display font-bold text-xl mb-1" style={{ color: "#e2e8f8", letterSpacing: "-0.02em" }}>
+            Phish<span style={{ color: "#00e5ff" }}>Guard</span>
+          </div>
+          <div className="font-mono text-xs" style={{ color: "#7986a8" }}>Secure access portal</div>
+        </motion.div>
+
+        {/* Demo accounts */}
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.1 }}
+          className="glass-card p-4 mb-4"
+        >
+          <div className="flex items-center gap-2 mb-3">
+            <span className="pulse-dot" />
+            <span className="font-mono text-xs uppercase tracking-widest" style={{ color: "#3d4d6e" }}>
+              Demo Access
+            </span>
           </div>
           <div className="grid grid-cols-2 gap-2">
             {DEMO_ACCOUNTS.map((demo) => (
-              <button
+              <motion.button
                 key={demo.label}
                 type="button"
                 onClick={() => loginAsDemo(demo)}
                 disabled={isLoading}
-                className="flex flex-col items-center gap-1.5 p-3 rounded-lg border transition-all hover:scale-105 disabled:opacity-50"
+                whileHover={{ scale: 1.03, y: -1 }}
+                whileTap={{ scale: 0.97 }}
+                className="flex items-center gap-2.5 p-3 rounded-xl transition-colors"
                 style={{
                   background: `${demo.color}08`,
-                  borderColor: `${demo.color}30`,
+                  border: `1px solid ${demo.color}20`,
                   cursor: isLoading ? "not-allowed" : "pointer",
+                  opacity: isLoading ? 0.5 : 1,
                 }}
               >
                 <div
-                  className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-mono font-bold"
-                  style={{ background: `${demo.color}15`, color: demo.color }}
+                  className="w-7 h-7 rounded-full flex items-center justify-center font-mono text-xs font-bold flex-shrink-0"
+                  style={{ background: `${demo.color}14`, color: demo.color }}
                 >
                   {demo.label[0]}
                 </div>
-                <div className="text-xs font-mono font-medium" style={{ color: demo.color }}>
-                  {demo.label}
+                <div className="text-left">
+                  <div className="font-mono text-xs font-semibold" style={{ color: demo.color }}>
+                    {demo.label}
+                  </div>
+                  <div className="font-mono text-xs" style={{ color: "#3d4d6e", fontSize: 9 }}>
+                    Instant login
+                  </div>
                 </div>
-              </button>
+                <Zap size={11} style={{ color: demo.color, opacity: 0.5, marginLeft: "auto" }} />
+              </motion.button>
             ))}
           </div>
-          <div className="mt-3 border-t pt-3" style={{ borderColor: "#1a2540" }}>
-            <div className="text-xs font-mono space-y-0.5" style={{ color: "#8892b0" }}>
-              {DEMO_ACCOUNTS.map((d) => (
-                <div key={d.email} className="flex gap-2 flex-wrap">
-                  <span style={{ color: d.color }}>{d.label}:</span>
-                  <span>{d.email}</span>
-                  <span style={{ opacity: 0.4 }}>/</span>
-                  <span>{d.password}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
+        </motion.div>
 
         {/* Login form */}
-        <div className="cyber-card p-8">
-          <div className="scanner-line" />
-          <h2 className="font-display text-xl font-semibold mb-6" style={{ color: "#e8eaf0" }}>
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.15 }}
+          className="glass-card p-6 relative overflow-hidden"
+        >
+          <div className="scanner-line-slow" />
+
+          <h2 className="font-display font-bold text-xl mb-5" style={{ color: "#e2e8f8", letterSpacing: "-0.01em" }}>
             Sign in
           </h2>
 
-          {error && (
-            <div
-              className="flex items-center gap-2 p-3 mb-4 rounded-lg text-sm font-mono"
-              style={{ background: "rgba(255,45,85,0.1)", border: "1px solid rgba(255,45,85,0.3)", color: "var(--neon-red)" }}
-            >
-              <AlertCircle className="w-4 h-4 shrink-0" />
-              {error}
-            </div>
-          )}
+          {/* Error */}
+          <AnimatePresence>
+            {error && (
+              <motion.div
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: "auto" }}
+                exit={{ opacity: 0, height: 0 }}
+                className="flex items-center gap-2 p-3 mb-4 rounded-xl font-mono text-xs overflow-hidden"
+                style={{ background: "rgba(255,61,90,0.08)", border: "1px solid rgba(255,61,90,0.2)", color: "#ff3d5a" }}
+              >
+                <AlertCircle size={13} style={{ flexShrink: 0 }} />
+                {error}
+              </motion.div>
+            )}
+          </AnimatePresence>
 
           <form onSubmit={handleSubmit} className="space-y-4" noValidate>
+            {/* Email */}
             <div>
-              <label className="block text-xs font-mono uppercase tracking-wider mb-2" style={{ color: "#8892b0" }}>
-                Email Address
+              <label className="block font-mono text-xs uppercase tracking-widest mb-2" style={{ color: "#3d4d6e" }}>
+                Email
               </label>
               <input
                 type="email"
@@ -174,57 +190,96 @@ export default function LoginPage() {
                 placeholder="you@company.com"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
+                onFocus={() => setFocusedField("email")}
+                onBlur={() => setFocusedField(null)}
                 autoComplete="email"
                 required
               />
             </div>
 
+            {/* Password */}
             <div>
-              <label className="block text-xs font-mono uppercase tracking-wider mb-2" style={{ color: "#8892b0" }}>
+              <label className="block font-mono text-xs uppercase tracking-widest mb-2" style={{ color: "#3d4d6e" }}>
                 Password
               </label>
               <div className="relative">
                 <input
                   type={showPassword ? "text" : "password"}
-                  className="scan-input pr-10"
+                  className="scan-input"
+                  style={{ paddingRight: 44 }}
                   placeholder="••••••••"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
+                  onFocus={() => setFocusedField("password")}
+                  onBlur={() => setFocusedField(null)}
                   autoComplete="current-password"
                   required
                 />
                 <button
                   type="button"
-                  onClick={() => setShowPassword(!showPassword)}
+                  onClick={() => setShowPassword((p) => !p)}
                   className="absolute right-3 top-1/2 -translate-y-1/2 transition-colors"
-                  style={{ color: "#8892b0" }}
+                  style={{ color: "#3d4d6e", background: "none", border: "none", cursor: "pointer", padding: 4 }}
                   tabIndex={-1}
                 >
-                  {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  {showPassword ? <EyeOff size={15} /> : <Eye size={15} />}
                 </button>
               </div>
             </div>
 
-            <button
+            <motion.button
               type="submit"
               disabled={isLoading}
-              className="btn-cyber w-full py-3 mt-2 text-sm"
+              whileHover={{ scale: 1.01 }}
+              whileTap={{ scale: 0.99 }}
+              className="btn-primary w-full py-3 mt-2"
             >
-              {isLoading ? "Authenticating..." : "→  Access System"}
-            </button>
+              {isLoading ? (
+                <span className="flex items-center justify-center gap-2">
+                  <motion.div
+                    animate={{ rotate: 360 }}
+                    transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+                    className="w-4 h-4 border-2 rounded-full"
+                    style={{ borderColor: "rgba(2,7,16,0.3)", borderTopColor: "#020710" }}
+                  />
+                  Authenticating...
+                </span>
+              ) : (
+                <>
+                  <Lock size={14} />
+                  Access System
+                  <ArrowRight size={14} />
+                </>
+              )}
+            </motion.button>
           </form>
 
-          <div className="mt-6 text-center">
-            <span className="text-sm font-mono" style={{ color: "#8892b0" }}>New user? </span>
-            <Link href="/auth/register" className="text-sm font-mono hover:underline" style={{ color: "var(--neon-cyan)" }}>
-              Create account
+          <div className="mt-5 text-center">
+            <span className="font-body text-sm" style={{ color: "#7986a8" }}>No account? </span>
+            <Link
+              href="/auth/register"
+              className="font-mono text-xs transition-colors"
+              style={{ color: "#00e5ff", textDecoration: "none" }}
+            >
+              Create one →
             </Link>
           </div>
-        </div>
+        </motion.div>
 
-        <p className="text-center text-xs font-mono mt-4" style={{ color: "#8892b0", opacity: 0.5 }}>
-          Protected by JWT · AES-256 · bcrypt
-        </p>
+        {/* Trust bar */}
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ delay: 0.4 }}
+          className="flex items-center justify-center gap-5 mt-5"
+        >
+          {["JWT Auth", "AES-256", "bcrypt"].map((item) => (
+            <div key={item} className="flex items-center gap-1.5">
+              <div className="w-1 h-1 rounded-full" style={{ background: "#3d4d6e" }} />
+              <span className="font-mono text-xs" style={{ color: "#3d4d6e" }}>{item}</span>
+            </div>
+          ))}
+        </motion.div>
       </div>
     </div>
   );

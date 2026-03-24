@@ -2,8 +2,8 @@
 SMS / Message Fraud Detection Service
 ======================================
 Detection pipeline (in order):
-  1. Rule engine       — pattern-based scoring (sms_detector_core)
-  2. ML model          — OpenAI fallback when rules are weak (sms_detector_core)
+  1. Rule engine       — pattern-based scoring (improved_message_detector)
+  2. Groq AI           — fast LLM classification via analyze_text_fast()
   3. Groq AI           — fast LLM classification via analyze_text_fast()
   4. Final risk score  — weighted combination of all layers
 
@@ -16,8 +16,40 @@ import logging
 import asyncio
 from typing import Optional
 
-from app.services import sms_detector_core as _core
+from app.services import improved_message_detector as _core  # upgraded detector
 from app.services import ai_service
+
+
+def _normalize_message_result(raw: dict) -> dict:
+    """
+    Normalise the dict returned by improved_message_detector.detect() so that
+    it is fully compatible with the shape the rest of message_service.py and
+    its callers expect from the previous core detector API.
+
+    improved_message_detector.detect() returns:
+        original_message, final_label, final_score, confidence_level,
+        rule_score, reasons, api_skipped, api_label, api_confidence,
+        api_explanation, api_error
+
+    The old core returned the same top-level keys; this shim is a safety net
+    that also back-fills the `language` field (not emitted by the new detector)
+    so downstream DB writes that reference result["language"] never KeyError.
+    """
+    return {
+        "original_message": raw.get("original_message", ""),
+        "final_label":      raw.get("final_label", "SAFE"),
+        "final_score":      float(raw.get("final_score", 0.0)),
+        "confidence_level": raw.get("confidence_level", "Low"),
+        "rule_score":       float(raw.get("rule_score", 0.0)),
+        "reasons":          list(raw.get("reasons", [])),
+        # Back-fill fields the old core included but the new one omits
+        "language":         raw.get("language", "unknown"),
+        "api_skipped":      raw.get("api_skipped", True),
+        "api_label":        raw.get("api_label", "N/A"),
+        "api_confidence":   float(raw.get("api_confidence", 0.0)),
+        "api_explanation":  raw.get("api_explanation", ""),
+        "api_error":        raw.get("api_error", None),
+    }
 
 logger = logging.getLogger(__name__)
 
@@ -71,8 +103,9 @@ async def scan_message_async(text: str) -> dict:
     }
 
     try:
-        # Layer 1 + 2: Rule engine + optional OpenAI
-        core_result = _core.detect(text.strip())
+        # Layer 1 + 2: Rule engine (improved_message_detector)
+        raw_result  = _core.detect(text.strip())       # ← improved_message_detector
+        core_result = _normalize_message_result(raw_result)  # ← ensure schema compat
         result.update(core_result)
     except Exception as e:
         logger.warning(f"Message scan core/OpenAI error, relying on Groq fallback: {e}")
@@ -130,7 +163,8 @@ def scan_message(text: str) -> dict:
     except Exception as exc:
         logger.warning("scan_message async dispatch failed, falling back to sync core: %s", exc)
         try:
-            result = _core.detect(text.strip())
+            raw_result = _core.detect(text.strip())          # ← improved_message_detector
+            result = _normalize_message_result(raw_result)   # ← ensure schema compat
             result["risk_score"]  = _build_risk_score_int(result.get("final_score", 0.0))
             result["ai_analysis"] = None
             result["ai_used"]     = False

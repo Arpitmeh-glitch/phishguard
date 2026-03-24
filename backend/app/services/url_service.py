@@ -4,7 +4,7 @@ URL Phishing Detection Service
 Detection pipeline (in order):
 
   Layer 1 + 2 — RandomForest ML model + rule-based overlay
-                (url_detector_core.predict_url)
+                (improved_url_detector.predict)
 
   Layer 3     — VirusTotal domain reputation
                 Called only when ML/rule layers already flag the URL as
@@ -28,7 +28,7 @@ import asyncio
 from typing import Optional
 from urllib.parse import urlparse
 
-from app.services import url_detector_core as _core
+from app.services import improved_url_detector as _core  # upgraded detector
 from app.services import ai_service
 from app.services import virustotal_service as _vt
 
@@ -39,19 +39,53 @@ _initialized = False
 
 
 def initialize() -> None:
-    """Load or train the RandomForest model.  Call once at startup."""
+    """
+    Prepare the URL detector.
+
+    improved_url_detector is self-contained (rule-based + optional ML).
+    It loads its whitelist at import time and needs no explicit model
+    initialisation.  We simply mark the module as ready so the rest of
+    the pipeline can call _core.predict() directly.
+    """
     global _initialized
     if _initialized:
         return
     try:
-        model = _core.load_or_train_model()
-        _core.set_model(model)
+        # Verify the module loaded correctly by exercising whitelist_stats().
+        stats = _core.whitelist_stats()
+        logger.info(
+            "✅ URL detection model initialised (whitelist: %d entries)",
+            stats.get("total_entries", 0),
+        )
         _initialized = True
-        logger.info("✅ URL detection model initialized")
     except Exception as e:
-        logger.error("❌ URL model init failed: %s", e)
+        logger.error("❌ URL detector init failed: %s", e)
         _initialized = False
         raise
+
+
+def _normalize_predict_result(raw: dict) -> dict:
+    """
+    Normalise the dict returned by improved_url_detector.predict() so that
+    it is fully compatible with the shape the rest of url_service.py and its
+    callers expect from the old url_detector_core API.
+
+    improved_url_detector.predict() already returns all required keys:
+        label, confidence, risk_tier, ml_probability, rule_score,
+        reasons, detection_mode, whitelist_hit
+    This shim guarantees every key is present and typed correctly even if
+    future versions of the detector change their output shape.
+    """
+    return {
+        "label":          raw.get("label", "SAFE"),
+        "confidence":     float(raw.get("confidence", 0.0)),
+        "risk_tier":      raw.get("risk_tier", "LOW"),
+        "ml_probability": float(raw.get("ml_probability", 0.0)),
+        "rule_score":     float(raw.get("rule_score", 0.0)),
+        "reasons":        list(raw.get("reasons", [])),
+        "detection_mode": raw.get("detection_mode", "rule-based"),
+        "whitelist_hit":  bool(raw.get("whitelist_hit", False)),
+    }
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -129,12 +163,13 @@ async def scan_url_async(url: str) -> dict:
     """
     Full async detection pipeline.  Called directly from the FastAPI route.
     """
-    if not _initialized or getattr(_core, "_model", None) is None:
+    if not _initialized:
         initialize()
 
     # ── Layer 1 + 2: ML model + rule-based overlay ────────────────────────
     try:
-        result = _core.predict_url(url.strip())
+        raw_result = _core.predict(url.strip())          # ← improved_url_detector
+        result = _normalize_predict_result(raw_result)   # ← ensure schema compat
     except RuntimeError as e:
         logger.error("URL scan failed (model not loaded): %s", e)
         result = {
@@ -155,9 +190,9 @@ async def scan_url_async(url: str) -> dict:
     ml_prob             = result.get("ml_probability", 0.0)
     rule_score          = result.get("rule_score", 0.0)
 
-    # ── BUG FIX: Convert label confidence to an internal threat score ──
-    # predict_url returns label confidence (e.g., 0.99 for SAFE).
-    # We need a unified risk score (0.0 to 1.0 where 1.0 is max threat) 
+    # improved_url_detector.predict() returns label confidence
+    # (e.g., 0.95 for SAFE meaning 95% confidence it is safe).
+    # We need a unified risk score (0.0 to 1.0 where 1.0 is max threat)
     # for VT/AI boosts and reclassification.
     if current_label == "SAFE":
         current_threat_score = max(0.0, 1.0 - original_confidence)
@@ -266,7 +301,8 @@ def scan_url(url: str) -> dict:
             "scan_url async failed, falling back to core: %s", exc
         )
         try:
-            result = _core.predict_url(url.strip())
+            raw_result = _core.predict(url.strip())          # ← improved_url_detector
+            result = _normalize_predict_result(raw_result)   # ← ensure schema compat
 
             current_label = result.get("label", "SAFE")
             conf = result.get("confidence", 0.0)

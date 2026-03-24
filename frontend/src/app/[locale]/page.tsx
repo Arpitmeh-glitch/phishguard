@@ -1,248 +1,501 @@
 "use client";
 import Link from "next/link";
-import { motion } from "framer-motion";
-import { useState, useEffect } from "react";
-import { Shield, Zap, Lock, Globe, MessageSquare, FileSearch, ChevronRight, Activity, User } from "lucide-react";
+import { motion, useMotionValue, useTransform, AnimatePresence } from "framer-motion";
+import { useState, useEffect, useRef } from "react";
+import {
+  Shield, Zap, Lock, Globe, MessageSquare, FileSearch,
+  ChevronRight, Activity, User, ArrowUpRight, Terminal,
+  Cpu, Eye, AlertTriangle, CheckCircle2, Layers,
+} from "lucide-react";
 
+// ── Animated stat counter ──────────────────────────────────────────────────────
+function CountUp({ end, suffix = "" }: { end: number; suffix?: string }) {
+  const [val, setVal] = useState(0);
+  useEffect(() => {
+    let start = 0;
+    const duration = 1800;
+    const step = 16;
+    const increment = end / (duration / step);
+    const timer = setInterval(() => {
+      start += increment;
+      if (start >= end) { setVal(end); clearInterval(timer); }
+      else setVal(Math.floor(start));
+    }, step);
+    return () => clearInterval(timer);
+  }, [end]);
+  return <>{val.toLocaleString()}{suffix}</>;
+}
+
+// ── Terminal typewriter ────────────────────────────────────────────────────────
+const terminalLines = [
+  { delay: 0,    text: "$ phishguard scan --url https://login-paypal-secure.xyz" },
+  { delay: 800,  text: "> Extracting 30 URL features..." },
+  { delay: 1600, text: "> Running RandomForest model..." },
+  { delay: 2400, text: "> [PHISHING] Confidence: 97.4%", danger: true },
+  { delay: 3200, text: "> 6 indicators found: brand_impersonation, suspicious_tld..." },
+  { delay: 4000, text: "> Threat blocked. User protected. ✓", safe: true },
+];
+
+function TerminalWindow() {
+  const [lines, setLines] = useState<typeof terminalLines>([]);
+
+  useEffect(() => {
+    terminalLines.forEach((line) => {
+      setTimeout(() => setLines((prev) => [...prev, line]), line.delay);
+    });
+    const reset = setInterval(() => {
+      setLines([]);
+      terminalLines.forEach((line) => {
+        setTimeout(() => setLines((prev) => [...prev, line]), line.delay);
+      });
+    }, 7000);
+    return () => clearInterval(reset);
+  }, []);
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 30, scale: 0.96 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      transition={{ delay: 0.8, duration: 0.7, ease: [0.22, 1, 0.36, 1] }}
+      className="glass-card p-0 overflow-hidden"
+      style={{ maxWidth: 580, margin: "0 auto" }}
+    >
+      {/* Window chrome */}
+      <div className="flex items-center gap-2 px-4 py-3" style={{ borderBottom: "1px solid rgba(255,255,255,0.06)", background: "rgba(8,14,28,0.6)" }}>
+        <div className="w-3 h-3 rounded-full" style={{ background: "#ff5f56" }} />
+        <div className="w-3 h-3 rounded-full" style={{ background: "#ffbd2e" }} />
+        <div className="w-3 h-3 rounded-full" style={{ background: "#27c93f" }} />
+        <span className="font-mono text-xs ml-3" style={{ color: "#3d4d6e" }}>phishguard — scan</span>
+      </div>
+      {/* Terminal body */}
+      <div className="p-5 min-h-[180px]" style={{ background: "rgba(2,4,10,0.8)" }}>
+        <AnimatePresence>
+          {lines.map((line, i) => (
+            <motion.div
+              key={i}
+              initial={{ opacity: 0, x: -8 }}
+              animate={{ opacity: 1, x: 0 }}
+              transition={{ duration: 0.3 }}
+              className="font-mono text-xs leading-7"
+              style={{
+                color: line.danger ? "#ff3d5a" : line.safe ? "#00e676" : i === 0 ? "#7986a8" : "#c8d0e8",
+                textShadow: line.danger ? "0 0 12px rgba(255,61,90,0.4)" : line.safe ? "0 0 12px rgba(0,230,118,0.4)" : "none",
+              }}
+            >
+              {line.text}
+              {i === lines.length - 1 && lines.length < terminalLines.length && (
+                <span className="cursor-blink" style={{ color: "#00e5ff" }}>▊</span>
+              )}
+            </motion.div>
+          ))}
+        </AnimatePresence>
+      </div>
+    </motion.div>
+  );
+}
+
+// ── Feature card ───────────────────────────────────────────────────────────────
 const features = [
   {
     icon: Globe,
     title: "URL Phishing Detection",
-    description: "RandomForest ML model trained on 68,000+ URLs. 23-feature extraction including entropy, TLD risk, subdomain abuse, and brand impersonation detection.",
-    color: "var(--neon-cyan)",
-    glow: "rgba(0,245,255,0.15)",
-    border: "rgba(0,245,255,0.3)",
+    description: "RandomForest ML trained on 68K+ URLs with 23-feature extraction. Catches brand impersonation, suspicious TLDs, entropy anomalies.",
+    accent: "#00e5ff",
+    glow: "rgba(0,229,255,0.12)",
   },
   {
     icon: MessageSquare,
     title: "SMS Fraud Detection",
-    description: "Hybrid rule-based + AI classification catches OTP theft, prize scams, bank fraud. Supports English, Hindi, and Hinglish.",
-    color: "var(--neon-green)",
-    glow: "rgba(0,255,136,0.15)",
-    border: "rgba(0,255,136,0.3)",
+    description: "Hybrid rule-based + AI classification. Detects OTP theft, prize scams, and bank fraud. Native English, Hindi & Hinglish support.",
+    accent: "#00e676",
+    glow: "rgba(0,230,118,0.12)",
   },
   {
     icon: FileSearch,
     title: "File Content Scanner",
-    description: "Upload emails, documents, logs. Encrypted storage with AES-256 and background phishing signature scanning.",
-    color: "var(--neon-purple)",
-    glow: "rgba(191,90,242,0.15)",
-    border: "rgba(191,90,242,0.3)",
+    description: "Upload emails, documents, logs. AES-256 encrypted storage with deep phishing signature analysis and macro detection.",
+    accent: "#c471ed",
+    glow: "rgba(196,113,237,0.12)",
   },
   {
     icon: Lock,
     title: "Enterprise Security",
-    description: "JWT auth, RBAC, AES-256 encryption, bcrypt hashing, per-IP rate limiting, account lockout, and full audit logs.",
-    color: "var(--neon-yellow)",
-    glow: "rgba(255,214,10,0.15)",
-    border: "rgba(255,214,10,0.3)",
+    description: "JWT auth, RBAC, bcrypt hashing, per-IP rate limiting, account lockout protection, and full audit trail logging.",
+    accent: "#ffb300",
+    glow: "rgba(255,179,0,0.12)",
   },
 ];
 
+// ── Trust indicators ───────────────────────────────────────────────────────────
 const stats = [
-  { label: "URLs Analyzed",      value: "2.4M+" },
-  { label: "Threats Blocked",    value: "187K+" },
-  { label: "Detection Accuracy", value: "97.2%" },
-  { label: "Avg Response Time",  value: "<200ms" },
+  { label: "URLs Analyzed",      value: 2400000, suffix: "+", display: "8M+" },
+  { label: "Threats Blocked",    value: 187000,  suffix: "+", display: "10K+" },
+  { label: "Detection Accuracy", value: 97,      suffix: ".2%", display: "97.2%" },
+  { label: "Avg Response",       value: 200,     suffix: "ms", display: "<200ms" },
 ];
 
-// ── Fancy "About Creator" animated button ─────────────────────────────────────
+// ── Scanning orb ───────────────────────────────────────────────────────────────
+function ScanOrb() {
+  return (
+    <div className="relative mx-auto" style={{ width: 120, height: 120 }}>
+      {/* Outer rings */}
+      {[1, 2, 3].map((i) => (
+        <motion.div
+          key={i}
+          className="absolute inset-0 rounded-full"
+          style={{
+            border: `1px solid rgba(0,229,255,${0.15 / i})`,
+            scale: 1 + i * 0.25,
+          }}
+          animate={{ rotate: 360 * (i % 2 === 0 ? 1 : -1) }}
+          transition={{ duration: 8 + i * 4, repeat: Infinity, ease: "linear" }}
+        />
+      ))}
+      {/* Core */}
+      <div
+        className="absolute inset-0 rounded-full flex items-center justify-center"
+        style={{
+          background: "radial-gradient(circle, rgba(0,229,255,0.15) 0%, rgba(0,229,255,0.04) 60%, transparent 100%)",
+          border: "1px solid rgba(0,229,255,0.3)",
+        }}
+      >
+        <Shield style={{ width: 36, height: 36, color: "#00e5ff", filter: "drop-shadow(0 0 12px rgba(0,229,255,0.7))" }} />
+      </div>
+    </div>
+  );
+}
+
+// ── Creator button ─────────────────────────────────────────────────────────────
 function CreatorButton() {
   const [mounted, setMounted] = useState(false);
-  useEffect(() => { setMounted(true); }, []);
-
-  // Static fallback during SSR (no framer-motion, avoids hydration mismatch)
-  if (!mounted) {
-    return (
-      <Link
-        href="/creator"
-        className="font-mono text-sm"
-        style={{ color: "#8892b0", textDecoration: "none" }}
-      >
-        About Creator
-      </Link>
-    );
-  }
-
+  useEffect(() => setMounted(true), []);
+  if (!mounted) return (
+    <Link href="/creator" className="font-mono text-xs" style={{ color: "#7986a8" }}>
+      About Creator
+    </Link>
+  );
   return (
     <Link href="/creator" style={{ textDecoration: "none" }}>
       <motion.div
-        initial={{ opacity: 0, scale: 0.9 }}
-        animate={{ opacity: 1, scale: 1 }}
-        transition={{ delay: 0.3, duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
-        whileHover={{ scale: 1.07, y: -1, boxShadow: "0 0 28px rgba(0,245,255,0.35)" }}
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        whileHover={{ scale: 1.05 }}
         whileTap={{ scale: 0.96 }}
+        className="flex items-center gap-2 px-3 py-1.5 rounded-lg font-mono text-xs"
         style={{
-          position: "relative",
-          display: "inline-flex",
-          alignItems: "center",
-          gap: 7,
-          padding: "8px 18px",
-          borderRadius: 10,
-          cursor: "pointer",
-          overflow: "hidden",
+          background: "rgba(0,229,255,0.05)",
+          border: "1px solid rgba(0,229,255,0.15)",
+          color: "#7986a8",
+          transition: "all 0.2s",
         }}
       >
-        {/* Spinning conic-gradient border ring */}
-        <motion.div
-          aria-hidden
-          animate={{ rotate: 360 }}
-          transition={{ duration: 4, repeat: Infinity, ease: "linear" }}
-          style={{
-            position: "absolute", inset: -2, borderRadius: 12, zIndex: 0,
-            background: "conic-gradient(from 0deg, #00f5ff, #a78bfa, #14b8a6, #38bdf8, #00f5ff)",
-          }}
-        />
-        {/* Dark inner fill */}
-        <div style={{
-          position: "absolute", inset: 1, borderRadius: 9, zIndex: 1,
-          background: "linear-gradient(135deg, #0d1628, #070c18)",
-        }} />
-        {/* Ambient glow pulse */}
-        <motion.div
-          aria-hidden
-          animate={{ opacity: [0.2, 0.55, 0.2] }}
-          transition={{ duration: 2.2, repeat: Infinity, ease: "easeInOut" }}
-          style={{
-            position: "absolute", inset: 0, borderRadius: 10, zIndex: 1,
-            background: "radial-gradient(ellipse at 50% 50%, rgba(0,245,255,0.1), transparent 70%)",
-            pointerEvents: "none",
-          }}
-        />
-        {/* Icon */}
-        <User
-          size={13}
-          style={{ position: "relative", zIndex: 2, flexShrink: 0, color: "#00f5ff" }}
-        />
-        {/* Gradient text */}
-        <span style={{
-          position: "relative", zIndex: 2,
-          fontSize: 13,
-          fontFamily: "'JetBrains Mono', monospace",
-          fontWeight: 600,
-          letterSpacing: "0.04em",
-          background: "linear-gradient(90deg, #00f5ff 0%, #a78bfa 100%)",
-          WebkitBackgroundClip: "text",
-          WebkitTextFillColor: "transparent",
-          filter: "drop-shadow(0 0 6px rgba(0,245,255,0.4))",
-        }}>
-          About Creator
-        </span>
+        <User size={11} style={{ color: "#00e5ff" }} />
+        About Creator
       </motion.div>
     </Link>
   );
 }
 
+// ── Main component ─────────────────────────────────────────────────────────────
 export default function LandingPage() {
-  return (
-    <div className="min-h-screen grid-bg relative overflow-hidden">
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
 
-      {/* Background orbs */}
-      <div className="fixed inset-0" style={{ zIndex: 0, pointerEvents: "none" }} aria-hidden="true">
-        <div className="absolute top-0 left-0 w-96 h-96 rounded-full" style={{ background: "radial-gradient(circle, #00f5ff, transparent)", filter: "blur(80px)", opacity: 0.08 }} />
-        <div className="absolute bottom-0 right-0 w-96 h-96 rounded-full" style={{ background: "radial-gradient(circle, #bf5af2, transparent)", filter: "blur(80px)", opacity: 0.06 }} />
+  return (
+    <div className="min-h-screen grid-bg relative overflow-hidden" style={{ background: "var(--bg-void)" }}>
+
+      {/* ── Ambient background orbs ── */}
+      <div className="fixed inset-0" style={{ zIndex: 0, pointerEvents: "none" }} aria-hidden>
+        <div className="absolute" style={{
+          top: "-20%", left: "50%", transform: "translateX(-50%)",
+          width: 800, height: 600,
+          background: "radial-gradient(ellipse, rgba(0,229,255,0.06) 0%, transparent 65%)",
+          filter: "blur(40px)",
+        }} />
+        <div className="absolute" style={{
+          bottom: "10%", right: "-10%",
+          width: 500, height: 500,
+          background: "radial-gradient(ellipse, rgba(196,113,237,0.05) 0%, transparent 65%)",
+          filter: "blur(60px)",
+        }} />
+        <div className="absolute" style={{
+          top: "40%", left: "-10%",
+          width: 400, height: 400,
+          background: "radial-gradient(ellipse, rgba(99,102,241,0.04) 0%, transparent 65%)",
+          filter: "blur(50px)",
+        }} />
       </div>
 
       {/* ── Nav ── */}
-      <nav className="relative flex items-center justify-between px-8 py-5 border-b border-cyber-border" style={{ zIndex: 10 }}>
-        <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-lg border flex items-center justify-center" style={{ background: "rgba(0,245,255,0.1)", borderColor: "rgba(0,245,255,0.3)" }}>
-            <Shield className="w-4 h-4" style={{ color: "var(--neon-cyan)" }} />
+      <motion.nav
+        initial={{ opacity: 0, y: -16 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.5 }}
+        className="relative flex items-center justify-between px-8 py-4"
+        style={{ zIndex: 10, borderBottom: "1px solid rgba(255,255,255,0.05)" }}
+      >
+        {/* Logo */}
+        <Link href="/" style={{ textDecoration: "none" }} className="flex items-center gap-3">
+          <div className="relative">
+            <div
+              className="w-8 h-8 rounded-xl flex items-center justify-center"
+              style={{ background: "rgba(0,229,255,0.08)", border: "1px solid rgba(0,229,255,0.2)" }}
+            >
+              <Shield size={16} style={{ color: "#00e5ff" }} />
+            </div>
+            <div
+              className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full"
+              style={{ background: "#00e676", boxShadow: "0 0 6px #00e676" }}
+            />
           </div>
-          <span className="font-display font-bold text-lg tracking-tight" style={{ color: "#e8eaf0" }}>
-            Phish<span style={{ color: "var(--neon-cyan)" }}>Guard</span>
+          <span className="font-display font-bold text-lg" style={{ color: "#e2e8f8", letterSpacing: "-0.02em" }}>
+            Phish<span style={{ color: "#00e5ff" }}>Guard</span>
           </span>
-        </div>
-        <div className="flex items-center gap-4">
+        </Link>
+
+        {/* Nav actions */}
+        <div className="flex items-center gap-3">
           <CreatorButton />
-          <Link href="/auth/login" className="transition-colors text-sm font-mono hover:text-white" style={{ color: "#8892b0" }}>
+          <Link
+            href="/auth/login"
+            className="font-mono text-xs px-4 py-2 rounded-lg transition-colors"
+            style={{ color: "#7986a8", border: "1px solid transparent" }}
+          >
             Sign In
           </Link>
-          <Link href="/auth/register" className="btn-cyber text-sm">
-            Get Started →
+          <Link href="/auth/register" className="btn-primary text-xs">
+            Get Started
+            <ChevronRight size={13} />
           </Link>
         </div>
-      </nav>
+      </motion.nav>
 
       {/* ── Hero ── */}
-      <section className="relative max-w-6xl mx-auto px-8 pt-24 pb-16" style={{ zIndex: 10 }}>
-        <div className="text-center">
-          <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full mb-8" style={{ border: "1px solid rgba(0,245,255,0.2)", background: "rgba(0,245,255,0.05)" }}>
-            <Activity className="w-3.5 h-3.5 animate-pulse" style={{ color: "var(--neon-cyan)" }} />
-            <span className="text-xs font-mono tracking-wider" style={{ color: "var(--neon-cyan)" }}>LIVE THREAT DETECTION</span>
-          </div>
+      <section className="relative max-w-6xl mx-auto px-8 pt-20 pb-12" style={{ zIndex: 10 }}>
 
-          <h1 className="font-display text-5xl md:text-7xl font-bold leading-tight mb-6" style={{ color: "#e8eaf0" }}>
-            Detect <span className="neon-text-cyan">Phishing</span>.<br />
-            Stop <span className="neon-text-red">Fraud</span>.<br />
-            Stay <span className="neon-text-green">Safe</span>.
+        {/* Live badge */}
+        <motion.div
+          initial={{ opacity: 0, scale: 0.9 }}
+          animate={{ opacity: 1, scale: 1 }}
+          transition={{ delay: 0.2, duration: 0.5 }}
+          className="flex justify-center mb-8"
+        >
+          <div
+            className="inline-flex items-center gap-2.5 px-4 py-2 rounded-full font-mono text-xs"
+            style={{
+              background: "rgba(0,230,118,0.06)",
+              border: "1px solid rgba(0,230,118,0.18)",
+              color: "#00e676",
+              letterSpacing: "0.08em",
+            }}
+          >
+            <span className="pulse-dot" />
+            LIVE THREAT DETECTION · 97.2% ACCURACY
+          </div>
+        </motion.div>
+
+        {/* Heading */}
+        <motion.div
+          initial={{ opacity: 0, y: 24 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.3, duration: 0.7, ease: [0.22, 1, 0.36, 1] }}
+          className="text-center mb-6"
+        >
+          <h1
+            className="font-display font-black leading-none mb-4"
+            style={{
+              fontSize: "clamp(48px, 8vw, 88px)",
+              letterSpacing: "-0.03em",
+              color: "#e2e8f8",
+            }}
+          >
+            Detect Phishing<br />
+            <span style={{
+              background: "linear-gradient(135deg, #00e5ff 0%, #c471ed 100%)",
+              WebkitBackgroundClip: "text",
+              WebkitTextFillColor: "transparent",
+              backgroundClip: "text",
+            }}>
+              Stop Fraud 
+            </span>
           </h1>
-
-          <p className="text-lg max-w-2xl mx-auto mb-10 leading-relaxed" style={{ color: "#8892b0" }}>
-            Enterprise-grade cybersecurity platform combining machine learning and AI to detect phishing URLs, SMS fraud, and malicious files in real time.
+          <p
+            className="font-body text-lg max-w-xl mx-auto leading-relaxed"
+            style={{ color: "#7986a8" }}
+          >
+            Enterprise-grade AI protection against phishing URLs, SMS fraud, and malicious files.
+            Real-time. Accurate. Built for security teams.
           </p>
+        </motion.div>
 
-          <div className="flex flex-col sm:flex-row gap-4 justify-center">
-            <Link href="/auth/register" className="btn-cyber text-sm px-8 py-3">
-              Start Scanning Free<ChevronRight className="w-4 h-4 ml-2" />
-            </Link>
-            <Link href="/auth/login" className="inline-flex items-center gap-2 font-mono px-8 py-3 rounded-lg transition-all text-sm" style={{ border: "1px solid #1a2540", color: "#8892b0" }}>
-              View Dashboard Demo
-            </Link>
-          </div>
-        </div>
+        {/* CTAs */}
+        <motion.div
+          initial={{ opacity: 0, y: 16 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.5, duration: 0.5 }}
+          className="flex flex-col sm:flex-row items-center justify-center gap-3 mb-16"
+        >
+          <Link href="/auth/register" className="btn-primary">
+            Start Scanning Free
+            <ChevronRight size={15} />
+          </Link>
+          <Link
+            href="/auth/login"
+            className="btn-cyber"
+            style={{ fontSize: 13 }}
+          >
+            <Eye size={14} />
+            View Dashboard
+          </Link>
+        </motion.div>
 
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-20">
-          {stats.map((stat) => (
-            <div key={stat.label} className="cyber-card p-5 text-center">
-              <div className="font-display text-3xl font-bold neon-text-cyan mb-1">{stat.value}</div>
-              <div className="text-xs font-mono tracking-wider uppercase" style={{ color: "#8892b0" }}>{stat.label}</div>
-            </div>
+        {/* Terminal demo */}
+        {mounted && <TerminalWindow />}
+
+        {/* Stats row */}
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ delay: 1.2, duration: 0.6 }}
+          className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-12"
+        >
+          {stats.map((stat, i) => (
+            <motion.div
+              key={stat.label}
+              initial={{ opacity: 0, y: 16 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 1.2 + i * 0.1 }}
+              className="glass-card p-5 text-center"
+            >
+              <div
+                className="font-display font-black mb-1"
+                style={{ fontSize: 28, color: "#00e5ff", textShadow: "0 0 20px rgba(0,229,255,0.4)" }}
+              >
+                {stat.display}
+              </div>
+              <div className="font-mono text-xs uppercase tracking-wider" style={{ color: "#7986a8" }}>
+                {stat.label}
+              </div>
+            </motion.div>
           ))}
-        </div>
+        </motion.div>
       </section>
 
       {/* ── Features ── */}
-      <section className="relative max-w-6xl mx-auto px-8 py-16" style={{ zIndex: 10 }}>
-        <div className="text-center mb-14">
-          <h2 className="font-display text-3xl font-bold mb-3" style={{ color: "#e8eaf0" }}>Three Layers of Protection</h2>
-          <p className="font-mono text-sm" style={{ color: "#8892b0" }}>Built for security analysts, enterprises, and developers</p>
-        </div>
-        <div className="grid md:grid-cols-2 gap-6">
-          {features.map((f) => (
-            <div key={f.title} className="cyber-card p-6 transition-all duration-300" style={{ cursor: "default" }}>
+      <section className="relative max-w-6xl mx-auto px-8 py-20" style={{ zIndex: 10 }}>
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          whileInView={{ opacity: 1, y: 0 }}
+          viewport={{ once: true }}
+          transition={{ duration: 0.6 }}
+          className="text-center mb-14"
+        >
+          <div className="font-mono text-xs uppercase tracking-widest mb-3" style={{ color: "#00e5ff" }}>
+            Detection Capabilities
+          </div>
+          <h2 className="font-display font-bold text-3xl mb-3" style={{ color: "#e2e8f8", letterSpacing: "-0.02em" }}>
+            Three Layers of Protection
+          </h2>
+          <p className="font-body text-sm" style={{ color: "#7986a8" }}>
+            Built for security analysts, enterprises, and developers
+          </p>
+        </motion.div>
+
+        <div className="grid md:grid-cols-2 gap-5">
+          {features.map((f, i) => (
+            <motion.div
+              key={f.title}
+              initial={{ opacity: 0, y: 24 }}
+              whileInView={{ opacity: 1, y: 0 }}
+              viewport={{ once: true }}
+              transition={{ delay: i * 0.1, duration: 0.5 }}
+              whileHover={{ y: -3 }}
+              className="glass-card p-6 group cursor-default"
+              style={{ transition: "box-shadow 0.2s" }}
+            >
               <div className="flex items-start gap-4">
-                <div className="w-10 h-10 rounded-lg flex items-center justify-center shrink-0 border" style={{ background: f.glow, borderColor: f.border }}>
-                  <f.icon className="w-5 h-5" style={{ color: f.color }} />
-                </div>
+                <motion.div
+                  whileHover={{ scale: 1.1, rotate: 5 }}
+                  className="w-11 h-11 rounded-xl flex items-center justify-center shrink-0"
+                  style={{
+                    background: f.glow,
+                    border: `1px solid ${f.accent}30`,
+                    boxShadow: `0 0 20px ${f.glow}`,
+                  }}
+                >
+                  <f.icon size={20} style={{ color: f.accent }} />
+                </motion.div>
                 <div>
-                  <h3 className="font-display font-semibold mb-2" style={{ color: "#e8eaf0" }}>{f.title}</h3>
-                  <p className="text-sm leading-relaxed" style={{ color: "#8892b0" }}>{f.description}</p>
+                  <h3
+                    className="font-display font-bold mb-2 text-base"
+                    style={{ color: "#e2e8f8", letterSpacing: "-0.01em" }}
+                  >
+                    {f.title}
+                  </h3>
+                  <p className="font-body text-sm leading-relaxed" style={{ color: "#7986a8" }}>
+                    {f.description}
+                  </p>
                 </div>
               </div>
-            </div>
+            </motion.div>
           ))}
         </div>
       </section>
 
-      {/* ── CTA ── */}
-      <section className="relative max-w-4xl mx-auto px-8 py-16 text-center" style={{ zIndex: 10 }}>
-        <div className="cyber-card p-12">
-          <div className="scanner-line" />
-          <Zap className="w-10 h-10 mx-auto mb-4" style={{ color: "var(--neon-cyan)" }} />
-          <h2 className="font-display text-3xl font-bold mb-4" style={{ color: "#e8eaf0" }}>Ready to protect your organization?</h2>
-          <p className="mb-8 font-mono text-sm" style={{ color: "#8892b0" }}>Free tier available. No credit card required. Enterprise plans available.</p>
-          <Link href="/auth/register" className="btn-cyber text-base px-10 py-3">Create Free Account</Link>
-        </div>
+      {/* ── How it works ── */}
+      <section className="relative max-w-4xl mx-auto px-8 py-16" style={{ zIndex: 10 }}>
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          whileInView={{ opacity: 1, y: 0 }}
+          viewport={{ once: true }}
+          className="glass-card p-10 text-center overflow-hidden"
+        >
+          <div className="scanner-line-slow" />
+          <ScanOrb />
+          <h2
+            className="font-display font-bold text-3xl mt-8 mb-3"
+            style={{ color: "#e2e8f8", letterSpacing: "-0.02em" }}
+          >
+            Ready to protect your organization?
+          </h2>
+          <p className="font-body text-sm mb-8" style={{ color: "#7986a8" }}>
+            Free tier available. No credit card required. Enterprise plans with SLA.
+          </p>
+          <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
+            <Link href="/auth/register" className="btn-primary">
+              Create Free Account
+              <ArrowUpRight size={15} />
+            </Link>
+          </div>
+
+          <div className="flex items-center justify-center gap-8 mt-10">
+            {[
+              { icon: CheckCircle2, text: "No card needed", color: "#00e676" },
+              { icon: Zap, text: "<200ms response", color: "#00e5ff" },
+              { icon: Lock, text: "AES-256 encrypted", color: "#c471ed" },
+            ].map((item) => (
+              <div key={item.text} className="flex items-center gap-2">
+                <item.icon size={13} style={{ color: item.color }} />
+                <span className="font-mono text-xs" style={{ color: "#7986a8" }}>{item.text}</span>
+              </div>
+            ))}
+          </div>
+        </motion.div>
       </section>
 
-      <footer className="relative border-t border-cyber-border px-8 py-6" style={{ zIndex: 10 }}>
-        <div className="max-w-6xl mx-auto flex items-center justify-between text-xs font-mono" style={{ color: "#8892b0" }}>
-          <span>© 2025 PhishGuard. Enterprise Cybersecurity Platform.</span>
-          <span className="flex items-center gap-1.5">
-            <span className="w-1.5 h-1.5 rounded-full animate-pulse" style={{ background: "var(--neon-green)" }} />
-            All systems operational
+      {/* ── Footer ── */}
+      <footer
+        className="relative px-8 py-5"
+        style={{ zIndex: 10, borderTop: "1px solid rgba(255,255,255,0.05)" }}
+      >
+        <div className="max-w-6xl mx-auto flex items-center justify-between">
+          <span className="font-mono text-xs" style={{ color: "#3d4d6e" }}>
+            © 2025 PhishGuard · Enterprise Cybersecurity Platform
           </span>
+          <div className="flex items-center gap-2">
+            <span className="pulse-dot" style={{ background: "#00e676" }} />
+            <span className="font-mono text-xs" style={{ color: "#3d4d6e" }}>All systems operational</span>
+          </div>
         </div>
       </footer>
     </div>

@@ -295,15 +295,16 @@ async def get_file_scan_status(
         #   user_id    = current_user.id
         # We order by created_at DESC so if re-scans ever happen we get the freshest one.
         meta_scan = (
-            db.query(Scan)
-            .filter(
-                Scan.user_id    == current_user.id,
-                Scan.scan_type  == ScanType.file,
-                Scan.input_data == f"[FILE ANALYSIS] {file_record.original_filename}",
-            )
-            .order_by(Scan.created_at.desc())
-            .first()
-        )
+                    db.query(Scan)
+                    .filter(
+                        Scan.user_id == current_user.id,
+                        Scan.scan_type == ScanType.file,
+                        Scan.created_at >= file_record.created_at
+                    )
+                    .order_by(Scan.created_at.desc())
+                    .first()
+                )
+        
 
         if meta_scan:
             # Normalise the stored ScanLabel enum to an uppercase string the
