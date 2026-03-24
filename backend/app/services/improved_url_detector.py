@@ -1,32 +1,4 @@
-"""
-improved_url_detector.py
-========================
-Self-contained improved URL phishing detector.
-Requires only: scikit-learn (optional), numpy (optional) — no tldextract, no whois, no requests.
 
-Key improvements over original url_detector_core.py:
-  1.  Zero network I/O in detection path (no whois / redirect following)
-  2.  Levenshtein typosquatting check (original had it, kept + improved)
-  3.  Homoglyph / lookalike character normalization
-  4.  Confusable brand regex (paypаl vs paypal — cyrillic 'а')
-  5.  Hex / percent-encoded token detection
-  6.  Combo-squatting detection (brand + generic word)
-  7.  Threshold-free hybrid: ML x 0.60 + rule_score x 0.40
-  8.  Hard-rule override: certain patterns always -> PHISHING
-  9.  Whitelist loaded ONCE at startup from CSV files (Alexa/Tranco format)
-  10. Safe override logic: whitelisted domain + no strong signals -> SAFE
-  11. Subdomain-abuse handling: sub.evil.paypal-login.com is NOT whitelisted
-  12. False-positive reduction: sbi.co.in and multi-part TLDs handled correctly
-
-FIX CHANGELOG (production bug fixes):
-  - All file paths now use Path(__file__).resolve().parent for production safety
-  - Whitelist load failures are now LOGGED at WARNING level (not silently ignored)
-  - Whitelist loading status is surfaced in whitelist_stats() for health checks
-  - _load_csv_whitelist() warns explicitly when no files are found
-  - predict() now logs at DEBUG level so every call is traceable
-  - whitelist_stats() returns csv_load_attempted / csv_load_succeeded flags
-  - No logic change to scoring, thresholds, or detection rules
-"""
 
 import re
 import os
@@ -54,8 +26,8 @@ _WHITELIST_CSV_PATHS = [
     _THIS_DIR.parent / "data" / "top-1m.csv",
     _THIS_DIR.parent / "data" / "tranco_L6J4.csv",
     # One level further up (mono-repo root / backend / data)
-    _THIS_DIR.parent.parent / "backend" / "data" / "top-1m.csv",
-    _THIS_DIR.parent.parent / "backend" / "data" / "tranco_L6J4.csv",
+    _THIS_DIR.parent.parent / "data" / "top-1m.csv",
+    _THIS_DIR.parent.parent / "data" / "tranco_L6J4.csv",
     # Docker / production mount points
     Path("/app/data/top-1m.csv"),
     Path("/app/data/tranco_L6J4.csv"),

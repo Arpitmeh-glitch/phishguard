@@ -46,6 +46,21 @@ from urllib.parse import urlparse
 from app.services import improved_url_detector as _core  # upgraded detector
 from app.services import ai_service
 from app.services import virustotal_service as _vt
+from pathlib import Path
+import joblib
+
+MODEL = None
+
+def load_model():
+    global MODEL
+    try:
+        BASE_DIR = Path(__file__).resolve().parent
+        MODEL_PATH = BASE_DIR / "model.pkl"
+        MODEL = joblib.load(MODEL_PATH)
+        logger.info("✅ ML model loaded successfully")
+    except Exception as e:
+        logger.error(f"❌ Failed to load ML model: {e}")
+        MODEL = None
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +86,7 @@ def initialize() -> None:
     Now: exceptions are re-raised so the FastAPI startup hook fails loudly,
     and a WARNING is emitted when CSV whitelists are missing.
     """
+    load_model()
     global _initialized
     if _initialized:
         return
@@ -223,7 +239,7 @@ async def scan_url_async(url: str) -> dict:
 
     # ── Layer 1 + 2: ML model + rule-based overlay ────────────────────────
     try:
-        raw_result = _core.predict(url.strip())
+        raw_result = _core.predict(url.strip(), model=MODEL)
         result     = _normalize_predict_result(raw_result)
         logger.debug(
             "scan_url_async() core result | label=%s | confidence=%.4f | "
