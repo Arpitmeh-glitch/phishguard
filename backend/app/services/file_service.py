@@ -43,7 +43,6 @@ from pathlib import Path
 from uuid import UUID
 from fastapi import UploadFile, HTTPException
 from sqlalchemy.orm import Session
-from app.services import improved_file_detector as _file_detector
 
 from app.config import settings
 from app.database import SessionLocal
@@ -167,7 +166,6 @@ def _analyze_content(content: bytes, filename: str) -> dict:
       - findings: list[str]  (human-readable threat findings)
       - risk_level: "safe" | "suspicious" | "dangerous"
     """
-    risk_level = "safe"
     findings = []
     urls = []
     messages = []
@@ -284,46 +282,21 @@ def _analyze_content(content: bytes, filename: str) -> dict:
         if ent > 7.2:
             findings.append(f"High entropy content ({ent:.2f}/8.0) — possible encryption/obfuscation")
 
-    # ── NEW: improved_file_detector integration ─────────────────────────────
-
-    try:
-        file_result = _file_detector.scan_file(filename, content)
-
-        if not isinstance(file_result, dict):
-            file_result = {
-                "label": "SAFE",
-                "reasons": ["Detector returned invalid result"],
-                "risk_score": 0.0
-            }
-
-    except Exception as e:
-        logger.error(f"Improved file detector crashed: {e}")
-        file_result = {
-            "label": "SAFE",
-            "reasons": ["Detector error"],
-            "risk_score": 0.0
-        }
-
-    # ✅ ALWAYS SAFE TO USE AFTER THIS POINT
-
-    # Merge reasons
-    for r in file_result.get("reasons", []):
-        if r not in findings:
-            findings.append(r)
-
-    # Escalate risk
-    label = file_result.get("label", "SAFE")
-
-    if label == "DANGEROUS":
+    # Determine risk level
+    dangerous_keywords = ["contains executable", "contains macros", "JavaScript", "/Launch", "BadZipFile"]
+    if any(any(dk in f for dk in dangerous_keywords) for f in findings):
         risk_level = "dangerous"
-    elif label == "SUSPICIOUS" and risk_level != "dangerous":
+    elif findings:
         risk_level = "suspicious"
+    else:
+        risk_level = "safe"
+
     return {
-    "urls": urls,
-    "messages": messages,
-    "findings": findings,
-    "risk_level": risk_level
-}
+        "urls": urls,
+        "messages": messages,
+        "findings": findings,
+        "risk_level": risk_level,
+    }
 
 
 async def save_encrypted_file(

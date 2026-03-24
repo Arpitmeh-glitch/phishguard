@@ -12,6 +12,7 @@ import { clsx } from "clsx";
 import { motion, AnimatePresence, useMotionValue, useSpring } from "framer-motion";
 import { useTranslations } from "next-intl";
 
+
 // ── Types ──────────────────────────────────────────────────────────────────────
 interface ScanResult {
   scan_id: string;
