@@ -42,19 +42,19 @@ const INTERESTS = [
 
 const TIMELINE = [
   {
-    year: "2024",
+    year: "2025",
     title: "Started BTech CSE @ UPES",
     desc: "Enrolled in Computer Science at UPES Dehradun with a focus on cybersecurity.",
     color: "#00f5ff",
   },
   {
-    year: "2024",
+    year: "2025",
     title: "Discovered Phishing Research",
     desc: "Began studying ML-based threat detection and ethical hacking fundamentals.",
     color: "#38bdf8",
   },
   {
-    year: "2025",
+    year: "2026",
     title: "Built PhishGuard",
     desc: "Designed and developed a full-stack phishing detection platform combining FastAPI, ML models, and Next.js.",
     color: "#14b8a6",
