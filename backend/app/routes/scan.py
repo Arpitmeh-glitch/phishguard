@@ -129,8 +129,26 @@ async def scan_url(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Message Scan
+# Message Scan (UPDATED - TRUST + FALSE POSITIVE FIX)
 # ─────────────────────────────────────────────────────────────────────────────
+
+# 🔥 Trusted domains list
+TRUSTED_DOMAINS = [
+    "google.com",
+    "spotify.com",
+    "amazon.com",
+    "microsoft.com",
+    "irctc.co.in",
+    "linkedin.com"
+]
+
+def is_trusted_sender(sender: str | None) -> bool:
+    if not sender:
+        return False
+
+    domain = sender.split("@")[-1].lower()
+    return any(domain.endswith(td) for td in TRUSTED_DOMAINS)
+
 
 @router.post("/message", response_model=MessageScanResponse)
 @scan_limiter.limit("20/minute")
@@ -140,20 +158,36 @@ async def scan_message(
     db: Session = Depends(get_db),
     current_user: User = Depends(_inject_user_for_rate_limit),
 ):
-    """Scan a text message for fraud patterns. Rate-limited to 20/min per user."""
-    result = await message_service.scan_message_async(payload.message.strip())
+    """Scan a text message for fraud patterns with trusted sender handling."""
 
+    # 🔥 Extract inputs
+    message_text = payload.message.strip()
+    sender = getattr(payload, "sender", None)
+
+    # 🔍 Run existing ML / rule-based scan
+    result = await message_service.scan_message_async(message_text)
+
+    # Default label from model
     fl = result.get("final_label", "SAFE")
+
+    # 🔥 TRUST OVERRIDE (MAIN FIX FOR YOUR ISSUE)
+    if is_trusted_sender(sender):
+        fl = "SAFE"
+        result["final_score"] = min(result.get("final_score", 0.0), 0.3)
+        result["reasons"] = ["Trusted sender domain detected"]
+
+    # 🧠 Label mapping (unchanged)
     label_map = {
         "FRAUD":      ScanLabel.fraud,
         "SUSPICIOUS": ScanLabel.suspicious,
         "SAFE":       ScanLabel.safe,
     }
 
+    # 💾 Store scan in DB
     scan = Scan(
         user_id=current_user.id,
         scan_type=ScanType.message,
-        input_data=payload.message[:5000],
+        input_data=message_text[:5000],
         label=label_map.get(fl, ScanLabel.safe),
         confidence=result.get("final_score", 0.0),
         reasons=json.dumps(result.get("reasons", [])),
@@ -162,18 +196,25 @@ async def scan_message(
         language=result.get("language"),
         api_used=not result.get("api_skipped", True),
     )
+
     db.add(scan)
     db.commit()
     db.refresh(scan)
 
+    # 📝 Audit log
     log_action(
         db, "scan.message",
         user_id=str(current_user.id),
         resource="scan", resource_id=str(scan.id),
         ip_address=request.client.host,
-        details={"label": fl, "score": result.get("final_score")},
+        details={
+            "label": fl,
+            "score": result.get("final_score"),
+            "sender": sender
+        },
     )
 
+    # 📤 Response
     return MessageScanResponse(
         scan_id=scan.id,
         label=fl,
@@ -187,7 +228,6 @@ async def scan_message(
         ai_analysis=result.get("ai_analysis"),
         created_at=scan.created_at,
     )
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # File Scan
