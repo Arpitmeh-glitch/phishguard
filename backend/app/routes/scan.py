@@ -151,7 +151,7 @@ def is_trusted_sender(sender: str | None) -> bool:
 
 
 @router.post("/message", response_model=MessageScanResponse)
-@scan_limiter.limit("20/minute")
+@scan_limiter.limit("500/minute")
 async def scan_message(
     request: Request,
     payload: MessageScanRequest,
