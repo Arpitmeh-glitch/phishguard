@@ -1,26 +1,4 @@
-"""
-PhishGuard — Production Cybersecurity API (SOC Edition)
-========================================================
-Added in this version:
-  - app/services/network_monitor.py  — Real OS connection monitoring
-  - app/services/threat_engine.py    — Enhanced 12-rule detection engine
-  - app/services/threat_feed.py      — Live threat intelligence feeds
-  - app/models/incidents.py          — Security incident model
-  - app/routes/threat.py             — Extended SOC endpoints (incidents, network scan, feeds)
 
-Middleware order (outermost → innermost):
-  FastAPI's add_middleware() builds a stack: the LAST middleware added runs
-  OUTERMOST (first to receive a request, last to process a response).
-
-  Order of add_middleware() calls below:
-    1. TrustedHostMiddleware     ← added first → runs innermost
-    2. SecurityHeadersMiddleware ← added second
-    3. CORSMiddleware            ← added last  → runs outermost ✓
-
-  CORSMiddleware must be outermost so it can short-circuit OPTIONS preflight
-  requests with HTTP 200 before TrustedHostMiddleware or SecurityHeadersMiddleware
-  inspect them. This ordering is correct.
-"""
 import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
