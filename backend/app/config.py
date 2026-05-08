@@ -1,7 +1,7 @@
 from pydantic_settings import BaseSettings
 from pydantic import ConfigDict
 from typing import Optional
-import secrets
+import secrets , os 
 
 
 class Settings(BaseSettings):
@@ -12,9 +12,8 @@ class Settings(BaseSettings):
     SECRET_KEY: str = secrets.token_urlsafe(32)
 
     # Database (FIXED for local)
-    import os
 
-    DATABASE_URL = os.getenv("DATABASE_URL")
+    DATABASE_URL: str = os.getenv("DATABASE_URL", "")
 
     # Redis
     REDIS_URL: str = "redis://localhost:6379/0"
