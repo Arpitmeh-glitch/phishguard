@@ -64,7 +64,7 @@ export async function generateMetadata({ params }: { params: { locale: string } 
       },
     },
     verification: {
-      google: "your-google-site-verification-code",
+      google: "UfofqfLf2AbY9mx6fsr1N3L1zbXrUcIK0rQU-2OutLc",
     },
   };
 }
