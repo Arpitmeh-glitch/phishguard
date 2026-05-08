@@ -12,7 +12,9 @@ class Settings(BaseSettings):
     SECRET_KEY: str = secrets.token_urlsafe(32)
 
     # Database (FIXED for local)
-    DATABASE_URL: str = "postgresql://postgres:postgres@localhost:5432/phishguard"
+    import os
+
+    DATABASE_URL = os.getenv("DATABASE_URL")
 
     # Redis
     REDIS_URL: str = "redis://localhost:6379/0"
