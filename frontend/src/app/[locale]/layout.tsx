@@ -60,12 +60,13 @@ export const metadata: Metadata = {
     },
   },
   verification: {
-    google: "your-google-site-verification-code",
+    google: "UfofqfLf2AbY9mx6fsr1N3L1zbXrUcIK0rQU-2OutLc",
   },
   icons: {
     icon: "/favicon.ico",
     apple: "/apple-touch-icon.png",
   },
+  
 };
 
 export const viewport = {
