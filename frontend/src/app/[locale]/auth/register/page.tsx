@@ -109,7 +109,7 @@ export default function RegisterPage() {
             </div>
           </Link>
           <div className="font-display font-bold text-xl mb-1" style={{ color: "#e2e8f8", letterSpacing: "-0.02em" }}>
-            Phish<span style={{ color: "#00e5ff" }}>Guard</span>
+            TieTie<span style={{ color: "#00e5ff" }}>Phish</span>
           </div>
           <div className="font-mono text-xs" style={{ color: "#7986a8" }}>{t("subtitle")}</div>
         </motion.div>

@@ -1,6 +1,6 @@
 {
   "common": {
-    "appName": "PhishGuard",
+    "appName": "TieTiePhish",
     "tagline": "Secure access portal",
     "loading": "Loading...",
     "authenticating": "Authenticating...",
@@ -51,7 +51,7 @@
     },
     "register": {
       "title": "Create Account",
-      "subtitle": "Join the PhishGuard platform",
+      "subtitle": "Join the TieTiePhish platform",
       "username": "Username",
       "usernamePlaceholder": "yourhandle",
       "email": "Email Address",
@@ -162,10 +162,10 @@
     "viewDetails": "Details"
   },
   "about": {
-    "title": "About PhishGuard",
+    "title": "About TieTiePhish",
     "subtitle": "Enterprise-grade cybersecurity detection platform",
     "mission": "Our Mission",
-    "missionText": "PhishGuard is built to protect individuals and organizations from evolving cyber threats using advanced AI and machine learning.",
+    "missionText": "TieTiePhish is built to protect individuals and organizations from evolving cyber threats using advanced AI and machine learning.",
     "features": "Features",
     "feature1Title": "AI-Powered Detection",
     "feature1Desc": "Advanced machine learning models trained on millions of phishing samples",

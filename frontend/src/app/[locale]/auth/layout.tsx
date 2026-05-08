@@ -1,5 +1,4 @@
 import type { Metadata } from "next";
-import ClientLayout from "./client-layout";
 
 export const metadata: Metadata = {
   robots: {
@@ -9,10 +8,10 @@ export const metadata: Metadata = {
   },
 };
 
-export default function DashboardLayout({
+export default function AuthLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  return <ClientLayout>{children}</ClientLayout>;
+  return children;
 }

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://backend:8000/api/v1" || "https://phishguard-znvu.onrender.com";
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://backend:8000/api/v1" || "https://tietiephish-znvu.onrender.com";
 
 export async function POST(req: NextRequest) {
   const refreshToken = req.cookies.get("pg_refresh")?.value;

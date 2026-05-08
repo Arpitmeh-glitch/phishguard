@@ -54,7 +54,7 @@ const MODE_CFG = {
   arp_kernel:     { label: "Kernel ARP Cache",       color: "#00f5ff", Icon: Info,          desc: "Devices from OS ARP cache" },
   arp_cache:      { label: "ARP Cache (Agent)",      color: "#00f5ff", Icon: Info,          desc: "ARP cache from local agent" },
   tcp_probe:      { label: "TCP Probe Mode",         color: "#ffd60a", Icon: Network,       desc: "Port-based discovery" },
-  agent:          { label: "Agent Report",           color: "#00ff88", Icon: Activity,      desc: "Data from PhishGuard Local Agent" },
+  agent:          { label: "Agent Report",           color: "#00ff88", Icon: Activity,      desc: "Data from TieTiePhish Local Agent" },
   self_only:      { label: "Limited — Self Only",    color: "#ff6b35", Icon: AlertTriangle, desc: "Only this machine reported" },
   container:      { label: "Container Environment", color: "#ff6b35", Icon: Box,           desc: "Running inside a container" },
   agent_required: { label: "Agent Required",        color: "#ff6b35", Icon: Download,      desc: "Deploy the Local Agent to scan your LAN" },
@@ -341,19 +341,19 @@ function AgentSetupTab({ backendUrl }: { backendUrl: string }) {
     },
     {
       title: "Download the agent",
-      commands: [`curl -O ${backendUrl}/agent/download/phishguard_agent.py`],
-      desc: "Or copy phishguard_agent.py from the backend/agent/ directory.",
+      commands: [`curl -O ${backendUrl}/agent/download/tietiephish_agent.py`],
+      desc: "Or copy tietiephish_agent.py from the backend/agent/ directory.",
     },
     {
       title: "Run the agent",
       commands: [
-        `python phishguard_agent.py --backend ${backendUrl}`,
+        `python tietiephish_agent.py --backend ${backendUrl}`,
         `# With auth token:`,
-        `python phishguard_agent.py --backend ${backendUrl} --token YOUR_JWT_TOKEN`,
+        `python tietiephish_agent.py --backend ${backendUrl} --token YOUR_JWT_TOKEN`,
         `# With ARP scanning (full MAC discovery):`,
-        `sudo python phishguard_agent.py --backend ${backendUrl}`,
+        `sudo python tietiephish_agent.py --backend ${backendUrl}`,
         `# Repeat every 60 seconds:`,
-        `python phishguard_agent.py --backend ${backendUrl} --interval 60`,
+        `python tietiephish_agent.py --backend ${backendUrl} --interval 60`,
       ],
       desc: "The agent will scan your local network and report results to the dashboard.",
     },
@@ -371,7 +371,7 @@ function AgentSetupTab({ backendUrl }: { backendUrl: string }) {
           {[
             { label: "Your Device", sub: "Local machine", color: "#00ff88", Icon: Monitor },
             null,
-            { label: "Local Agent", sub: "phishguard_agent.py", color: "#00f5ff", Icon: Terminal },
+            { label: "Local Agent", sub: "tietiephish_agent.py", color: "#00f5ff", Icon: Terminal },
             null,
             { label: "Backend API", sub: "FastAPI", color: "#bf5af2", Icon: Server },
             null,
@@ -424,7 +424,7 @@ function AgentSetupTab({ backendUrl }: { backendUrl: string }) {
           <p className="font-mono text-xs leading-relaxed" style={{ color: "#8892b0" }}>
             <span className="font-semibold" style={{ color: "#00f5ff" }}>Why a local agent? — </span>
             Cloud servers (Railway, Render, Vercel) cannot access your home or office LAN directly.
-            The PhishGuard Local Agent runs on a machine inside your network, performs the scan locally
+            The TieTiePhish Local Agent runs on a machine inside your network, performs the scan locally
             using ARP or TCP probing, and reports the results to the dashboard. This is the same architecture
             used by enterprise SOC tools like Nessus, Qualys, and CrowdStrike.
           </p>

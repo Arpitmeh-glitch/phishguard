@@ -198,7 +198,7 @@ export default function AboutSection() {
     return (
       <section
         style={{ minHeight: 480, background: "#050810" }}
-        aria-label="About PhishGuard"
+        aria-label="About TieTiePhish"
       />
     );
   }
@@ -211,7 +211,7 @@ export default function AboutSection() {
         background: "#050810",
         overflow:   "hidden",
       }}
-      aria-label="About PhishGuard"
+      aria-label="About TieTiePhish"
     >
       {/* Subtle grid background */}
       <div
@@ -326,7 +326,7 @@ export default function AboutSection() {
                 filter:                 "drop-shadow(0 0 18px rgba(0,245,255,0.4))",
               }}
             >
-              PhishGuard
+              TieTiePhish
             </span>
           </motion.h2>
 

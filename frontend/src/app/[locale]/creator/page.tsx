@@ -55,7 +55,7 @@ const TIMELINE = [
   },
   {
     year: "2026",
-    title: "Built PhishGuard",
+    title: "Built TieTiePhish",
     desc: "Designed and developed a full-stack phishing detection platform combining FastAPI, ML models, and Next.js.",
     color: "#14b8a6",
   },
@@ -298,7 +298,7 @@ export default function CreatorPage() {
               A passionate cybersecurity student building tools that matter. Currently studying
               Computer Science at{" "}
               <span style={{ color: "#e8eaf0", fontWeight: 500 }}>UPES Dehradun</span>, I
-              created PhishGuard to explore the intersection of{" "}
+              created TieTiePhish to explore the intersection of{" "}
               <span style={{ color: "#00f5ff" }}>machine learning</span> and{" "}
               <span style={{ color: "#a78bfa" }}>threat detection</span> — turning academic
               curiosity into real security tools.
@@ -347,14 +347,14 @@ export default function CreatorPage() {
             <motion.div variants={fadeUp} style={{ textAlign: "center", marginBottom: 48 }}>
               <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: 12, marginBottom: 14 }}>
                 <div style={{ height: 1, width: 32, background: "#00f5ff" }} />
-                <span style={{ fontSize: 11, fontFamily: "'JetBrains Mono',monospace", letterSpacing: "0.3em", color: "#00f5ff", textTransform: "uppercase" as const }}>Why PhishGuard?</span>
+                <span style={{ fontSize: 11, fontFamily: "'JetBrains Mono',monospace", letterSpacing: "0.3em", color: "#00f5ff", textTransform: "uppercase" as const }}>Why TieTiePhish?</span>
                 <div style={{ height: 1, width: 32, background: "#00f5ff" }} />
               </div>
               <h2 style={{ fontFamily: "'Space Grotesk',sans-serif", fontWeight: 800, fontSize: "clamp(1.8rem,4vw,2.8rem)", color: "#e8eaf0", marginBottom: 12 }}>
                 Built to Learn. Built to Protect.
               </h2>
               <p style={{ fontSize: 15, color: "#8892b0", lineHeight: 1.8, maxWidth: 580, margin: "0 auto" }}>
-                PhishGuard started as a semester project and became something much bigger — a
+                TieTiePhish started as a semester project and became something much bigger — a
                 real-world exploration of how AI can make the internet safer, one scan at a time.
               </p>
             </motion.div>
@@ -541,7 +541,7 @@ export default function CreatorPage() {
             }}>
               <Shield size={40} style={{ color: "#00f5ff", marginBottom: 20 }} />
               <h2 style={{ fontFamily: "'Space Grotesk',sans-serif", fontWeight: 800, fontSize: "clamp(1.4rem,3vw,2rem)", color: "#e8eaf0", marginBottom: 14 }}>
-                Try PhishGuard
+                Try TieTiePhish
               </h2>
               <p style={{ fontSize: 14, color: "#8892b0", lineHeight: 1.75, marginBottom: 28 }}>
                 Scan URLs, messages, and files for phishing threats — free, fast, and powered by ML.
@@ -571,7 +571,7 @@ export default function CreatorPage() {
           <span style={{ fontSize: 12, fontFamily: "'JetBrains Mono',monospace", color: "#8892b0" }}>
             Made with ❤️ by{" "}
             <span style={{ color: "#00f5ff" }}>Arpit Mehrotra</span>
-            {" "}· © 2025 PhishGuard
+            {" "}· © 2025 TieTiePhish
           </span>
         </footer>
 

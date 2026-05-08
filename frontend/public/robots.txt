@@ -1,0 +1,10 @@
+User-agent: *
+Allow: /
+
+# Block private/authenticated areas
+Disallow: /api/
+Disallow: /auth/
+Disallow: /dashboard/
+
+# Sitemap
+Sitemap: https://tietiephish.vercel.app/sitemap.xml

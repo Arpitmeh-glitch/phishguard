@@ -7,17 +7,17 @@ const sections = [
     icon: ScrollText,
     color: "#00f5ff",
     title: "1. Acceptance of Terms",
-    content: `By accessing or using PhishGuard ("the Service"), you agree to be bound by these Terms of Service ("Terms"). If you do not agree to these Terms in their entirety, you must not use the Service.
+    content: `By accessing or using TieTiePhish ("the Service"), you agree to be bound by these Terms of Service ("Terms"). If you do not agree to these Terms in their entirety, you must not use the Service.
 
-These Terms constitute a legally binding agreement between you ("User") and PhishGuard ("we", "us", or "our"). We reserve the right to amend these Terms at any time. Continued use of the Service following notice of changes constitutes acceptance of the revised Terms.
+These Terms constitute a legally binding agreement between you ("User") and TieTiePhish ("we", "us", or "our"). We reserve the right to amend these Terms at any time. Continued use of the Service following notice of changes constitutes acceptance of the revised Terms.
 
-You must be at least 18 years of age and legally capable of entering into a binding contract to use this Service. By using PhishGuard, you represent and warrant that you meet these requirements.`,
+You must be at least 18 years of age and legally capable of entering into a binding contract to use this Service. By using TieTiePhish, you represent and warrant that you meet these requirements.`,
   },
   {
     icon: Shield,
     color: "#00ff88",
     title: "2. Description of Service",
-    content: `PhishGuard is a cybersecurity platform that provides:
+    content: `TieTiePhish is a cybersecurity platform that provides:
 
 • Phishing URL detection and analysis using machine learning and rule-based systems
 • SMS and message fraud detection
@@ -25,7 +25,7 @@ You must be at least 18 years of age and legally capable of entering into a bind
 • Live network traffic threat monitoring
 • Threat intelligence dashboards and historical scan reporting
 
-The Service is provided for legitimate security research, organizational threat protection, and personal cybersecurity awareness. PhishGuard is a detection and analysis tool only — it does not prevent, block, or remediate threats on your infrastructure.`,
+The Service is provided for legitimate security research, organizational threat protection, and personal cybersecurity awareness. TieTiePhish is a detection and analysis tool only — it does not prevent, block, or remediate threats on your infrastructure.`,
   },
   {
     icon: Eye,
@@ -45,7 +45,7 @@ You must not submit content you do not have the legal right to share, including 
     icon: Lock,
     color: "#ffd60a",
     title: "4. Privacy and Data Handling",
-    content: `Data you submit to PhishGuard for analysis ("Scan Data") is processed as follows:
+    content: `Data you submit to TieTiePhish for analysis ("Scan Data") is processed as follows:
 
 • URLs and domain names are analyzed by our detection engines and stored in association with your account for history and reporting purposes.
 • File uploads are encrypted at rest using AES-256-CBC encryption immediately upon receipt. Files are stored encrypted and are never shared with third parties.
@@ -60,7 +60,7 @@ By using the Service, you grant us a limited, non-exclusive license to process y
     icon: Ban,
     color: "#ff2d55",
     title: "5. Acceptable Use Policy",
-    content: `The following uses of PhishGuard are strictly prohibited:
+    content: `The following uses of TieTiePhish are strictly prohibited:
 
 • Submitting URLs, files, or messages with the intent to evade detection or test evasion techniques against our platform
 • Using the Service to scan third-party systems, URLs, or content you do not own or have explicit authorization to test
@@ -76,14 +76,14 @@ Violation of this policy may result in immediate account termination and, where 
     icon: AlertTriangle,
     color: "#ff9f0a",
     title: "6. Security Limitations and Disclaimer",
-    content: `PhishGuard is a threat detection tool and is subject to inherent limitations:
+    content: `TieTiePhish is a threat detection tool and is subject to inherent limitations:
 
-• No detection system achieves 100% accuracy. PhishGuard may produce false positives (safe content flagged as threats) or false negatives (threats not detected).
+• No detection system achieves 100% accuracy. TieTiePhish may produce false positives (safe content flagged as threats) or false negatives (threats not detected).
 • Detection models are based on known threat patterns and may not identify zero-day or novel attack techniques.
 • The Live Threat Detection feature provides indicators of suspicious activity and should be used in conjunction with professional network security monitoring, not as a replacement for it.
 • Threat intelligence databases are updated regularly but may not reflect the most current threat landscape at all times.
 
-PhishGuard does not guarantee that use of the Service will protect you from all phishing attacks, fraud, or malware. You are responsible for implementing comprehensive security measures appropriate to your risk profile.`,
+TieTiePhish does not guarantee that use of the Service will protect you from all phishing attacks, fraud, or malware. You are responsible for implementing comprehensive security measures appropriate to your risk profile.`,
   },
   {
     icon: Zap,
@@ -93,7 +93,7 @@ PhishGuard does not guarantee that use of the Service will protect you from all 
 
 The Service is provided "as is" and "as available" without warranties of any kind, whether express or implied, including but not limited to warranties of merchantability, fitness for a particular purpose, or non-infringement.
 
-PhishGuard shall not be liable for any indirect, incidental, special, consequential, or punitive damages, including but not limited to loss of profits, data, or business opportunities, arising from your use of or inability to use the Service, even if advised of the possibility of such damages.
+TieTiePhish shall not be liable for any indirect, incidental, special, consequential, or punitive damages, including but not limited to loss of profits, data, or business opportunities, arising from your use of or inability to use the Service, even if advised of the possibility of such damages.
 
 Our total cumulative liability to you for any claims arising from these Terms or your use of the Service shall not exceed the amount paid by you for the Service in the twelve (12) months preceding the claim.`,
   },
@@ -101,7 +101,7 @@ Our total cumulative liability to you for any claims arising from these Terms or
     icon: Server,
     color: "#00f5ff",
     title: "8. Service Availability",
-    content: `We strive to maintain high availability of the PhishGuard platform but do not guarantee uninterrupted service. Scheduled and emergency maintenance may result in temporary unavailability.
+    content: `We strive to maintain high availability of the TieTiePhish platform but do not guarantee uninterrupted service. Scheduled and emergency maintenance may result in temporary unavailability.
 
 We reserve the right to:
 • Modify, suspend, or discontinue any aspect of the Service at any time with reasonable notice where possible
@@ -140,7 +140,7 @@ export default function TermsOfServicePage() {
           style={{ borderColor: "rgba(0,245,255,0.2)", background: "rgba(0,245,255,0.04)", color: "#8892b0" }}
         >
           <span style={{ color: "#00f5ff" }}>TL;DR</span>{" "}
-          PhishGuard is a cybersecurity detection tool. Use it lawfully and responsibly. We protect your data.
+          TieTiePhish is a cybersecurity detection tool. Use it lawfully and responsibly. We protect your data.
           We make no guarantee of perfect detection. Do not use it to test systems you don't own.
         </div>
       </motion.div>
@@ -189,10 +189,10 @@ export default function TermsOfServicePage() {
       >
         <p className="font-mono text-xs" style={{ color: "#8892b0" }}>
           Questions about these Terms?{" "}
-          <span style={{ color: "#00f5ff" }}>legal@phishguard.io</span>
+          <span style={{ color: "#00f5ff" }}>legal@tietiephish.io</span>
         </p>
         <p className="font-mono text-xs mt-1" style={{ color: "#8892b0", opacity: 0.5 }}>
-          PhishGuard · Cybersecurity Platform · All rights reserved
+          TieTiePhish · Cybersecurity Platform · All rights reserved
         </p>
       </motion.div>
     </div>

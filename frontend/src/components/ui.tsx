@@ -1,8 +1,8 @@
 "use client";
 /**
- * PhishGuard UI Components
+ * TieTiePhish UI Components
  * ─────────────────────────────────────────────────────────────────────────────
- * Shared, reusable components for the PhishGuard design system.
+ * Shared, reusable components for the TieTiePhish design system.
  * Import from: @/components/ui
  */
 import { motion, AnimatePresence } from "framer-motion";

@@ -119,11 +119,11 @@ const techStack = [
 const terms = [
   {
     title: "Educational & Security Use Only",
-    desc: "PhishGuard is intended for educational and security analysis purposes only.",
+    desc: "TieTiePhish is intended for educational and security analysis purposes only.",
   },
   {
     title: "No Misuse",
-    desc: "Users must not leverage PhishGuard to facilitate illegal activity or circumvent security systems.",
+    desc: "Users must not leverage TieTiePhish to facilitate illegal activity or circumvent security systems.",
   },
   {
     title: "Legal Content",
@@ -289,12 +289,12 @@ export default function AboutPage() {
               WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent",
               filter: "drop-shadow(0 0 16px rgba(0,245,255,0.35))",
             }}>
-              PhishGuard
+              TieTiePhish
             </span>
           </motion.h1>
 
           <motion.p variants={fadeUp} style={{ fontSize: 17, color: "#8892b0", lineHeight: 1.75, maxWidth: 580, margin: "0 auto 40px" }}>
-            PhishGuard is an advanced phishing detection platform that analyzes{" "}
+            TieTiePhish is an advanced phishing detection platform that analyzes{" "}
             <span style={{ color: "#00f5ff" }}>URLs</span>,{" "}
             <span style={{ color: "#00f5ff" }}>messages</span>, and{" "}
             <span style={{ color: "#00f5ff" }}>files</span>{" "}
@@ -391,7 +391,7 @@ export default function AboutPage() {
                     with a strong passion for cybersecurity and ethical hacking.
                   </p>
                   <p style={{ fontSize: 14, color: "#8892b0", lineHeight: 1.75, marginBottom: 20 }}>
-                    He built PhishGuard to explore <span style={{ color: "#e8eaf0" }}>phishing detection</span>,{" "}
+                    He built TieTiePhish to explore <span style={{ color: "#e8eaf0" }}>phishing detection</span>,{" "}
                     <span style={{ color: "#e8eaf0" }}>secure authentication</span>, and{" "}
                     <span style={{ color: "#e8eaf0" }}>ML-based threat analysis</span>. His goal is a career in
                     threat intelligence, malware analysis, and security engineering.
@@ -489,7 +489,7 @@ export default function AboutPage() {
                 <div>
                   <div style={{ fontFamily: "'Syne', sans-serif", fontWeight: 700, color: "#ffd60a", fontSize: 16, marginBottom: 8 }}>Disclaimer</div>
                   <p style={{ fontSize: 13, color: "#8892b0", lineHeight: 1.75, margin: 0 }}>
-                    PhishGuard is a <span style={{ color: "#ffd60a" }}>cybersecurity research and analysis tool</span>.
+                    TieTiePhish is a <span style={{ color: "#ffd60a" }}>cybersecurity research and analysis tool</span>.
                     Detection results are informational and should not be considered guaranteed security advice.
                     Always verify suspicious content through multiple sources.
                   </p>
@@ -517,7 +517,7 @@ export default function AboutPage() {
               Created by <span style={{ color: "#00f5ff", fontWeight: 500 }}>Arpit Mehrotra</span>
             </div>
             <div style={{ fontSize: 11, color: "#1a2540", fontFamily: "'JetBrains Mono', monospace", marginTop: 2 }}>
-              © 2026 PhishGuard · All rights reserved.
+              © 2026 TieTiePhish · All rights reserved.
             </div>
           </div>
           <div style={{ display: "flex", gap: 8 }}>
